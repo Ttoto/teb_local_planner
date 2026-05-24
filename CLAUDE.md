@@ -1,34 +1,65 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-## Build
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
-```bash
-cd build && cmake .. && make -j$(nproc)
-./teb
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
 ```
 
-Dependencies: g2o, Eigen3, Boost (system, thread, graph), Qt5 Widgets, nlohmann/json (header-only at `/usr/include/nlohmann/`), SuiteSparse.
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-## Architecture
+---
 
-This is a non-ROS port of the TEB (Timed Elastic Band) local planner. The original ROS version is at [rst-tu-dortmund/teb_local_planner](https://github.com/rst-tu-dortmund/teb_local_planner).
-
-**Core algorithm flow:**
-
-1. `TebConfig` (`inc/teb_config.h`) holds ~80 parameters across 7 nested structs (Trajectory, Robot, GoalTolerance, Obstacles, Optimization, HomotopyClasses, Recovery). Serialization to/from JSON via nlohmann `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE` macros.
-2. `TebOptimalPlanner` (`inc/optimal_planner.h`) is the main planner, inheriting from `PlannerInterface`. It builds a g2o hypergraph where vertices represent robot poses and time intervals, and edges encode constraints (velocity, acceleration, obstacles, kinematics, time optimality, etc.).
-3. `TimedElasticBand` (`inc/timed_elastic_band.h`) stores the trajectory as sequences of `VertexPose*` and `VertexTimeDiff*`. It handles initialization, adding/removing poses, and trajectory querying.
-4. Custom g2o edges/vertices live in `inc/g2o_types/` — each edge type encodes one constraint (velocity limits, obstacle avoidance, etc.).
-5. `PoseSE2` (`inc/pose_se2.h`) is the SE(2) pose representation with mutable `x()`, `y()`, `theta()` accessors.
-
-**Key types:** `ObstaclePtr`, `RobotFootprintModelPtr`, `TebVisualizationPtr`, `ViaPointContainer`, `PoseSE2` (all in `teb_local_planner` namespace).
-
-**Visualization layer** (`TebVisualization` in `src/visualization.cpp`) is intentionally stubbed out (ROS-free). The Qt5 GUI in `main.cpp` draws trajectories directly via `QPainter`.
-
-## GUI (main.cpp)
-
-The Qt5 app (`TebDisplayWidget`) draws a 500x500 viewport with coordinate mapping `pixel = world * 100 + 250`. A timer fires the planner every 30ms. The "Edit Config" button opens a dialog editing `teb_config.json` directly — saving recreates the planner with the new parameters.
-
-Theta sliders use integer range [-314, 314] → radians via `* 0.01` (≈ [-π, π]).
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
