@@ -46,7 +46,7 @@ namespace teb_local_planner
     {
     }
 
-    void TebVisualization::publishTebContainer(const TebOptPlannerContainer& teb_planner, const std::string& ns)
+    void TebVisualization::publishTebContainer(const std::vector< boost::shared_ptr<TebOptimalPlanner> >& teb_planner, const std::string& ns)
     {
     }
 
@@ -61,6 +61,7 @@ namespace teb_local_planner
 
     bool TebVisualization::printErrorWhenNotInitialized() const
     {
+        return !initialized_;
     }
 
 } // namespace teb_local_planner

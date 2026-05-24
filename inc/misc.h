@@ -149,4 +149,15 @@ inline const T& get_const_reference(const T& val, typename boost::disable_if<boo
 
 } // namespace teb_local_planner
 
+namespace g2o {
+
+inline double sign(double x)
+{
+  if (x > 0.0) return 1.0;
+  if (x < 0.0) return -1.0;
+  return 0.0;
+}
+
+} // namespace g2o
+
 #endif /* MISC_H */

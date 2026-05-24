@@ -20,7 +20,7 @@
 #include <g2o/core/optimization_algorithm_gauss_newton.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
 #include <g2o/solvers/csparse/linear_solver_csparse.h>
-#include <g2o/solvers/cholmod/linear_solver_cholmod.h>
+//#include <g2o/solvers/cholmod/linear_solver_cholmod.h>
 
 // g2o custom edges and vertices for the TEB planner
 #include "g2o_types/edge_velocity.h"

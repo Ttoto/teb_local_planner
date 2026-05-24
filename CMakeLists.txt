@@ -1,19 +1,22 @@
 cmake_minimum_required(VERSION 3.17)
 project(teb)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_AUTOMOC ON)
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake_modules)
 
 find_package(Boost REQUIRED COMPONENTS system thread graph)
 find_package(SUITESPARSE REQUIRED)
 find_package(G2O REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
 include_directories(
+        ${PROJECT_SOURCE_DIR}/inc
         /usr/include/eigen3
+        /usr/include/nlohmann
         ${SUITESPARSE_INCLUDE_DIRS}
         ${G2O_INCLUDE_DIR}
-        ${OpenCV_INCLUDE_DIRS}
+        ${Qt5Widgets_INCLUDE_DIRS}
 )
 
 add_library(lib_teb
@@ -32,5 +35,5 @@ target_link_libraries(
         ${SUITESPARSE_LIBRARIES}
         ${G2O_LIBRARIES}
         -lboost_system -lboost_thread -lboost_graph
-        ${OpenCV_LIBS}
+        Qt5::Widgets
 )

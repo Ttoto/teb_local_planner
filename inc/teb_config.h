@@ -3,6 +3,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/StdVector>
+#include <nlohmann/json.hpp>
 
 
 // Definitions
@@ -325,8 +326,66 @@ namespace teb_local_planner
          */
         void checkParameters() const;
 
+        void saveToFile(const std::string& filename) const;
+        void loadFromFile(const std::string& filename);
+
     };
 
+
+} // namespace teb_local_planner
+
+namespace teb_local_planner {
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::Trajectory,
+    teb_autosize, dt_ref, dt_hysteresis, min_samples, max_samples,
+    global_plan_overwrite_orientation, allow_init_with_backwards_motion,
+    global_plan_viapoint_sep, via_points_ordered, max_global_plan_lookahead_dist,
+    global_plan_prune_distance, exact_arc_length, force_reinit_new_goal_dist,
+    force_reinit_new_goal_angular, feasibility_check_no_poses, publish_feedback,
+    min_resolution_collision_check_angular, control_look_ahead_poses)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::Robot,
+    max_vel_x, max_vel_x_backwards, max_vel_y, max_vel_theta,
+    acc_lim_x, acc_lim_y, acc_lim_theta, min_turning_radius, wheelbase,
+    cmd_angle_instead_rotvel, is_footprint_dynamic)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::GoalTolerance,
+    yaw_goal_tolerance, xy_goal_tolerance, free_goal_vel, complete_global_plan)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::Obstacles,
+    min_obstacle_dist, inflation_dist, dynamic_obstacle_inflation_dist,
+    include_dynamic_obstacles, include_costmap_obstacles,
+    costmap_obstacles_behind_robot_dist, obstacle_poses_affected,
+    legacy_obstacle_association, obstacle_association_force_inclusion_factor,
+    obstacle_association_cutoff_factor, costmap_converter_plugin,
+    costmap_converter_spin_thread, costmap_converter_rate)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::Optimization,
+    no_inner_iterations, no_outer_iterations, optimization_activate,
+    optimization_verbose, penalty_epsilon, weight_max_vel_x, weight_max_vel_y,
+    weight_max_vel_theta, weight_acc_lim_x, weight_acc_lim_y, weight_acc_lim_theta,
+    weight_kinematics_nh, weight_kinematics_forward_drive, weight_kinematics_turning_radius,
+    weight_optimaltime, weight_shortest_path, weight_obstacle, weight_inflation,
+    weight_dynamic_obstacle, weight_dynamic_obstacle_inflation, weight_viapoint,
+    weight_prefer_rotdir, weight_adapt_factor, obstacle_cost_exponent)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::HomotopyClasses,
+    enable_homotopy_class_planning, enable_multithreading, simple_exploration,
+    max_number_classes, selection_cost_hysteresis, selection_prefer_initial_plan,
+    selection_obst_cost_scale, selection_viapoint_cost_scale,
+    selection_alternative_time_cost, switching_blocking_period,
+    roadmap_graph_no_samples, roadmap_graph_area_width,
+    roadmap_graph_area_length_scale, h_signature_prescaler, h_signature_threshold,
+    obstacle_keypoint_offset, obstacle_heading_threshold,
+    viapoints_all_candidates, visualize_hc_graph,
+    visualize_with_time_as_z_axis_scale, delete_detours_backwards,
+    detours_orientation_tolerance, length_start_orientation_vector,
+    max_ratio_detours_duration_best_duration)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TebConfig::Recovery,
+    shrink_horizon_backup, shrink_horizon_min_duration, oscillation_recovery,
+    oscillation_v_eps, oscillation_omega_eps, oscillation_recovery_min_duration,
+    oscillation_filter_duration)
 
 } // namespace teb_local_planner
 

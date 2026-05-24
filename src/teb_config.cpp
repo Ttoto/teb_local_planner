@@ -1,4 +1,5 @@
 #include "../inc/teb_config.h"
+#include <fstream>
 
 namespace teb_local_planner
 {
@@ -59,6 +60,44 @@ namespace teb_local_planner
         if (optim.weight_optimaltime <= 0)
             printf("TebLocalPlannerROS() Param Warning: parameter weight_optimaltime shoud be > 0 (even if weight_shortest_path is in use)");
 
+    }
+
+    void TebConfig::saveToFile(const std::string& filename) const
+    {
+        nlohmann::json j;
+        j["odom_topic"] = odom_topic;
+        j["map_frame"] = map_frame;
+        j["trajectory"] = trajectory;
+        j["robot"] = robot;
+        j["goal_tolerance"] = goal_tolerance;
+        j["obstacles"] = obstacles;
+        j["optim"] = optim;
+        j["hcp"] = hcp;
+        j["recovery"] = recovery;
+
+        std::ofstream ofs(filename);
+        ofs << j.dump(2) << std::endl;
+    }
+
+    void TebConfig::loadFromFile(const std::string& filename)
+    {
+        std::ifstream ifs(filename);
+        if (!ifs.is_open()) return;
+
+        nlohmann::json j;
+        ifs >> j;
+
+        if (j.contains("odom_topic")) odom_topic = j["odom_topic"].get<std::string>();
+        if (j.contains("map_frame")) map_frame = j["map_frame"].get<std::string>();
+        if (j.contains("trajectory")) trajectory = j["trajectory"].get<Trajectory>();
+        if (j.contains("robot")) robot = j["robot"].get<Robot>();
+        if (j.contains("goal_tolerance")) goal_tolerance = j["goal_tolerance"].get<GoalTolerance>();
+        if (j.contains("obstacles")) obstacles = j["obstacles"].get<Obstacles>();
+        if (j.contains("optim")) optim = j["optim"].get<Optimization>();
+        if (j.contains("hcp")) hcp = j["hcp"].get<HomotopyClasses>();
+        if (j.contains("recovery")) recovery = j["recovery"].get<Recovery>();
+
+        checkParameters();
     }
 
 } // namespace teb_local_planner

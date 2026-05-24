@@ -3,6 +3,7 @@
 
 #include <g2o/stuff/misc.h>
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include "misc.h"
 #include "teb_types.h"
 
@@ -190,7 +191,7 @@ namespace teb_local_planner
         void averageInPlace(const PoseSE2& pose1, const PoseSE2& pose2)
         {
             _position = (pose1._position + pose2._position)/2;
-            _theta = g2o::average_angle(pose1._theta, pose2._theta);
+            _theta = std::atan2(std::sin(pose1._theta) + std::sin(pose2._theta), std::cos(pose1._theta) + std::cos(pose2._theta));
         }
 
         /**
@@ -203,7 +204,7 @@ namespace teb_local_planner
           */
         static PoseSE2 average(const PoseSE2& pose1, const PoseSE2& pose2)
         {
-            return PoseSE2( (pose1._position + pose2._position)/2 , g2o::average_angle(pose1._theta, pose2._theta) );
+            return PoseSE2( (pose1._position + pose2._position)/2 , std::atan2(std::sin(pose1._theta) + std::sin(pose2._theta), std::cos(pose1._theta) + std::cos(pose2._theta)) );
         }
 
         /**
