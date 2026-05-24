@@ -11,12 +11,15 @@
 #include <QDialog>
 #include <QPlainTextEdit>
 #include <QImage>
+#include <QMouseEvent>
+#include <cmath>
 #include <fstream>
 
 #include "inc/teb_config.h"
 #include "inc/pose_se2.h"
 #include "inc/robot_footprint_model.h"
 #include "inc/obstacles.h"
+#include "inc/occupancy_grid.h"
 #include "inc/optimal_planner.h"
 #include <boost/smart_ptr.hpp>
 
@@ -31,10 +34,11 @@ public:
         , _start(-2, 0, 0)
         , _end(2, 0, 0)
         , _image(500, 500, QImage::Format_RGB888)
+        , _grid(0.05, 100, 100, -2.5, -2.5)
     {
         _image.fill(Qt::black);
 
-        _obstacles.emplace_back(boost::make_shared<PointObstacle>(0, 0));
+        _grid.extractObstacles(_obstacles);
         _robot_model = boost::make_shared<CircularRobotFootprint>(0.4);
         _visual = TebVisualizationPtr(new TebVisualization(_config));
 
@@ -73,6 +77,14 @@ public slots:
     void setStartY(double v) { _start_y = v; }
     void setEndX(double v)   { _end_x = v; }
     void setEndY(double v)   { _end_y = v; }
+
+    void setBrushRadius(double r) { _brush_radius = r; }
+
+    void clearGrid()
+    {
+        _grid.clear();
+        _grid.extractObstacles(_obstacles);
+    }
 
     void editConfig()
     {
@@ -113,18 +125,71 @@ public slots:
 
     void runPlanner()
     {
+        _grid.extractObstacles(_obstacles);
+
         _image.fill(Qt::black);
         QPainter painter(&_image);
 
+        // Draw grid: occupied cells
+        int gw = _grid.getWidth(), gh = _grid.getHeight();
+        double res = _grid.getResolution();
+        double ox = _grid.getOriginX(), oy = _grid.getOriginY();
+        int cell_px = static_cast<int>(std::ceil(res * 100.0));
+        for (int iy = 0; iy < gh; ++iy) {
+            for (int ix = 0; ix < gw; ++ix) {
+                if (_grid.isOccupied(ix, iy)) {
+                    int sx = static_cast<int>((ox + ix * res) * 100.0 + 250);
+                    int sy = static_cast<int>((oy + iy * res) * 100.0 + 250);
+                    painter.fillRect(sx, sy, cell_px, cell_px, QColor(140, 50, 20));
+                }
+            }
+        }
+
+        // Draw grid lines (1m spacing = every 20 cells at 0.05m res)
+        painter.setPen(QPen(QColor(40, 40, 40), 1));
+        for (int iy = 0; iy <= gh; iy += 20) {
+            int sy = static_cast<int>((oy + iy * res) * 100.0 + 250);
+            painter.drawLine(0, sy, 500, sy);
+        }
+        for (int ix = 0; ix <= gw; ix += 20) {
+            int sx = static_cast<int>((ox + ix * res) * 100.0 + 250);
+            painter.drawLine(sx, 0, sx, 500);
+        }
+
+        auto drawArrow = [&](int cx, int cy, double theta_rad, const QColor& color) {
+            const int arrow_len = 18;
+            const int head_len = 7;
+            int tip_x  = cx + static_cast<int>(std::cos(theta_rad) * arrow_len);
+            int tip_y  = cy + static_cast<int>(std::sin(theta_rad) * arrow_len);
+            int base_x = cx - static_cast<int>(std::cos(theta_rad) * arrow_len);
+            int base_y = cy - static_cast<int>(std::sin(theta_rad) * arrow_len);
+
+            painter.setPen(QPen(color, 2));
+            painter.drawLine(base_x, base_y, tip_x, tip_y);
+
+            double a1 = theta_rad + M_PI * 0.75;
+            double a2 = theta_rad - M_PI * 0.75;
+            QPoint head[3] = {
+                QPoint(tip_x, tip_y),
+                QPoint(tip_x + static_cast<int>(std::cos(a1) * head_len),
+                        tip_y + static_cast<int>(std::sin(a1) * head_len)),
+                QPoint(tip_x + static_cast<int>(std::cos(a2) * head_len),
+                        tip_y + static_cast<int>(std::sin(a2) * head_len))
+            };
+            painter.setBrush(color);
+            painter.drawPolygon(head, 3);
+        };
+
+        int sx = static_cast<int>(_start_x * 100.0 + 250);
+        int sy = static_cast<int>(_start_y * 100.0 + 250);
+        drawArrow(sx, sy, _start_theta * 0.01, Qt::green);
+
+        int gx = static_cast<int>(_end_x * 100.0 + 250);
+        int gy = static_cast<int>(_end_y * 100.0 + 250);
+        drawArrow(gx, gy, _end_theta * 0.01, Qt::blue);
+
         try
         {
-            _start.x() = _start_x;
-            _start.y() = _start_y;
-            _start.theta() = _start_theta * 0.01;
-            _end.x() = _end_x;
-            _end.y() = _end_y;
-            _end.theta() = _end_theta * 0.01;
-
             _planner->plan(_start, _end);
 
             std::vector<Eigen::Vector3f> path;
@@ -156,6 +221,48 @@ protected:
         painter.drawImage(0, 0, _image);
     }
 
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton)  _mouse_left_down = true;
+        if (event->button() == Qt::RightButton) _mouse_right_down = true;
+        _last_mouse_x = event->pos().x();
+        _last_mouse_y = event->pos().y();
+        applyBrush(_last_mouse_x, _last_mouse_y);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton)  _mouse_left_down = false;
+        if (event->button() == Qt::RightButton) _mouse_right_down = false;
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override
+    {
+        if (!_mouse_left_down && !_mouse_right_down) return;
+        int x0 = _last_mouse_x, y0 = _last_mouse_y;
+        int x1 = event->pos().x(), y1 = event->pos().y();
+        int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
+        int steps = std::max(dx, dy);
+        for (int i = 0; i <= steps; ++i) {
+            double t = (steps == 0) ? 0.0 : static_cast<double>(i) / steps;
+            int xi = x0 + static_cast<int>((x1 - x0) * t);
+            int yi = y0 + static_cast<int>((y1 - y0) * t);
+            applyBrush(xi, yi);
+        }
+        _last_mouse_x = x1;
+        _last_mouse_y = y1;
+    }
+
+    void applyBrush(int sx, int sy)
+    {
+        double wx = (sx - 250.0) / 100.0;
+        double wy = (sy - 250.0) / 100.0;
+        if (_mouse_left_down)
+            _grid.setOccupied(wx, wy, _brush_radius);
+        else if (_mouse_right_down)
+            _grid.setFree(wx, wy, _brush_radius);
+    }
+
 private:
     TebConfig _config;
     PoseSE2 _start;
@@ -167,6 +274,12 @@ private:
     QImage _image;
     QTimer* _timer;
     std::string _configFile;
+    OccupancyGridMap _grid;
+    double _brush_radius = 0.15;
+    bool _mouse_left_down = false;
+    bool _mouse_right_down = false;
+    int _last_mouse_x = 0;
+    int _last_mouse_y = 0;
     std::vector<ObstaclePtr> _obstacles;
     ViaPointContainer _via_points;
     RobotFootprintModelPtr _robot_model;
@@ -275,6 +388,25 @@ int main(int argc, char* argv[])
     QPushButton* editConfigBtn = new QPushButton("Edit Config");
     QObject::connect(editConfigBtn, &QPushButton::clicked, display, &TebDisplayWidget::editConfig);
     layout->addWidget(editConfigBtn);
+
+    // Brush radius control
+    QHBoxLayout* brushRow = new QHBoxLayout;
+    QLabel* brushLabel = new QLabel("Brush (m):");
+    QDoubleSpinBox* brushSpin = new QDoubleSpinBox;
+    brushSpin->setRange(0.05, 1.0);
+    brushSpin->setSingleStep(0.05);
+    brushSpin->setValue(0.15);
+    brushSpin->setDecimals(2);
+    QObject::connect(brushSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+        display, &TebDisplayWidget::setBrushRadius);
+    brushRow->addWidget(brushLabel);
+    brushRow->addWidget(brushSpin);
+    layout->addLayout(brushRow);
+
+    // Clear Grid button
+    QPushButton* clearBtn = new QPushButton("Clear Grid");
+    QObject::connect(clearBtn, &QPushButton::clicked, display, &TebDisplayWidget::clearGrid);
+    layout->addWidget(clearBtn);
 
     window.setLayout(layout);
     window.show();

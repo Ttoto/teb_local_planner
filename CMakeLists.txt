@@ -25,6 +25,7 @@ add_library(lib_teb
         src/visualization.cpp
         src/optimal_planner.cpp
         src/timed_elastic_band.cpp
+        src/occupancy_grid.cpp
 )
 
 add_executable(teb main.cpp)
