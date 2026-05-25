@@ -157,14 +157,14 @@ public slots:
         }
 
         auto drawArrow = [&](int cx, int cy, double theta_rad, const QColor& color) {
-            const int arrow_len = 18;
-            const int head_len = 7;
+            const int arrow_len = 30;
+            const int head_len = 12;
             int tip_x  = cx + static_cast<int>(std::cos(theta_rad) * arrow_len);
             int tip_y  = cy + static_cast<int>(std::sin(theta_rad) * arrow_len);
             int base_x = cx - static_cast<int>(std::cos(theta_rad) * arrow_len);
             int base_y = cy - static_cast<int>(std::sin(theta_rad) * arrow_len);
 
-            painter.setPen(QPen(color, 2));
+            painter.setPen(QPen(color, 4));
             painter.drawLine(base_x, base_y, tip_x, tip_y);
 
             double a1 = theta_rad + M_PI * 0.75;
