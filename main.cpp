@@ -33,10 +33,10 @@ public:
         : QWidget(parent)
         , _start(-2, 0, 0)
         , _end(2, 0, 0)
-        , _image(500, 500, QImage::Format_RGB888)
+        , _image(1000, 1000, QImage::Format_RGB888)
         , _grid(0.05, 100, 100, -2.5, -2.5)
     {
-        _image.fill(Qt::black);
+        _image.fill(Qt::gray);
 
         _grid.extractObstacles(_obstacles);
         _robot_model = boost::make_shared<CircularRobotFootprint>(0.4);
@@ -127,19 +127,19 @@ public slots:
     {
         _grid.extractObstacles(_obstacles);
 
-        _image.fill(Qt::black);
+        _image.fill(Qt::gray);
         QPainter painter(&_image);
 
         // Draw grid: occupied cells
         int gw = _grid.getWidth(), gh = _grid.getHeight();
         double res = _grid.getResolution();
         double ox = _grid.getOriginX(), oy = _grid.getOriginY();
-        int cell_px = static_cast<int>(std::ceil(res * 100.0));
+        int cell_px = static_cast<int>(std::ceil(res * 200.0));
         for (int iy = 0; iy < gh; ++iy) {
             for (int ix = 0; ix < gw; ++ix) {
                 if (_grid.isOccupied(ix, iy)) {
-                    int sx = static_cast<int>((ox + ix * res) * 100.0 + 250);
-                    int sy = static_cast<int>((oy + iy * res) * 100.0 + 250);
+                    int sx = static_cast<int>((ox + ix * res) * 200.0 + 500);
+                    int sy = static_cast<int>((oy + iy * res) * 200.0 + 500);
                     painter.fillRect(sx, sy, cell_px, cell_px, QColor(140, 50, 20));
                 }
             }
@@ -148,12 +148,12 @@ public slots:
         // Draw grid lines (1m spacing = every 20 cells at 0.05m res)
         painter.setPen(QPen(QColor(40, 40, 40), 1));
         for (int iy = 0; iy <= gh; iy += 20) {
-            int sy = static_cast<int>((oy + iy * res) * 100.0 + 250);
-            painter.drawLine(0, sy, 500, sy);
+            int sy = static_cast<int>((oy + iy * res) * 200.0 + 500);
+            painter.drawLine(0, sy, 1000, sy);
         }
         for (int ix = 0; ix <= gw; ix += 20) {
-            int sx = static_cast<int>((ox + ix * res) * 100.0 + 250);
-            painter.drawLine(sx, 0, sx, 500);
+            int sx = static_cast<int>((ox + ix * res) * 200.0 + 500);
+            painter.drawLine(sx, 0, sx, 1000);
         }
 
         auto drawArrow = [&](int cx, int cy, double theta_rad, const QColor& color) {
@@ -180,13 +180,20 @@ public slots:
             painter.drawPolygon(head, 3);
         };
 
-        int sx = static_cast<int>(_start_x * 100.0 + 250);
-        int sy = static_cast<int>(_start_y * 100.0 + 250);
+        int sx = static_cast<int>(_start_x * 200.0 + 500);
+        int sy = static_cast<int>(_start_y * 200.0 + 500);
         drawArrow(sx, sy, _start_theta * 0.01, Qt::green);
 
-        int gx = static_cast<int>(_end_x * 100.0 + 250);
-        int gy = static_cast<int>(_end_y * 100.0 + 250);
+        int gx = static_cast<int>(_end_x * 200.0 + 500);
+        int gy = static_cast<int>(_end_y * 200.0 + 500);
         drawArrow(gx, gy, _end_theta * 0.01, Qt::blue);
+
+        _start.x() = _start_x;
+        _start.y() = _start_y;
+        _start.theta() = _start_theta * 0.01;
+        _end.x() = _end_x;
+        _end.y() = _end_y;
+        _end.theta() = _end_theta * 0.01;
 
         try
         {
@@ -198,10 +205,10 @@ public slots:
             painter.setPen(QPen(Qt::white, 1));
             for (size_t i = 0; i + 1 < path.size(); ++i)
             {
-                int x = static_cast<int>(path[i][0] * 100.f + 250);
-                int y = static_cast<int>(path[i][1] * 100.f + 250);
-                int nx = static_cast<int>(path[i + 1][0] * 100.f + 250);
-                int ny = static_cast<int>(path[i + 1][1] * 100.f + 250);
+                int x = static_cast<int>(path[i][0] * 200.f + 500);
+                int y = static_cast<int>(path[i][1] * 200.f + 500);
+                int nx = static_cast<int>(path[i + 1][0] * 200.f + 500);
+                int ny = static_cast<int>(path[i + 1][1] * 200.f + 500);
                 painter.drawLine(x, y, nx, ny);
             }
         }
@@ -255,8 +262,8 @@ protected:
 
     void applyBrush(int sx, int sy)
     {
-        double wx = (sx - 250.0) / 100.0;
-        double wy = (sy - 250.0) / 100.0;
+        double wx = (sx - 500.0) / 200.0;
+        double wy = (sy - 500.0) / 200.0;
         if (_mouse_left_down)
             _grid.setOccupied(wx, wy, _brush_radius);
         else if (_mouse_right_down)
@@ -301,7 +308,7 @@ int main(int argc, char* argv[])
     window.setWindowTitle("TEB Local Planner");
 
     TebDisplayWidget* display = new TebDisplayWidget;
-    display->setFixedSize(500, 500);
+    display->setFixedSize(1000, 1000);
 
     // --- Start pose controls ---
     QLabel* startTitle = new QLabel("<b>Start Pose</b>");
