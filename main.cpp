@@ -13,6 +13,7 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QButtonGroup>
 #include <cmath>
 #include <fstream>
 
@@ -25,6 +26,11 @@
 #include <boost/smart_ptr.hpp>
 
 using namespace teb_local_planner;
+
+enum ToolMode { TOOL_DRAW, TOOL_ERASE };
+
+static const double BRUSH_SIZES[] = { 0.1, 0.2, 0.5, 1.0, 2.0 };
+static const int BRUSH_SIZE_COUNT = 5;
 
 class TebDisplayWidget : public QWidget
 {
@@ -102,6 +108,8 @@ public slots:
     void setEndY(double v)   { _end_y = v; }
 
     void setBrushRadius(double r) { _brush_radius = r; }
+    void setToolMode(int mode) { _tool_mode = static_cast<ToolMode>(mode); }
+    void setBrushSizeIdx(int idx) { _brush_radius = BRUSH_SIZES[idx]; }
 
     void clearGrid()
     {
@@ -264,6 +272,15 @@ protected:
     {
         QPainter painter(this);
         painter.drawImage(0, 0, _image);
+        // Brush preview circle
+        if (_mouse_inside) {
+            double s = getScale();
+            int r_px = static_cast<int>(_brush_radius * s);
+            QColor preview = (_tool_mode == TOOL_DRAW) ? QColor(140, 50, 20, 100) : QColor(200, 200, 200, 100);
+            painter.setPen(QPen(preview, 1));
+            painter.setBrush(QBrush(preview));
+            painter.drawEllipse(_mouse_x - r_px, _mouse_y - r_px, 2 * r_px, 2 * r_px);
+        }
     }
 
     void mousePressEvent(QMouseEvent* event) override
@@ -283,7 +300,10 @@ protected:
 
     void mouseMoveEvent(QMouseEvent* event) override
     {
-        if (!_mouse_left_down && !_mouse_right_down) return;
+        _mouse_x = event->pos().x();
+        _mouse_y = event->pos().y();
+        _mouse_inside = true;
+        if (!_mouse_left_down && !_mouse_right_down) { update(); return; }
         int x0 = _last_mouse_x, y0 = _last_mouse_y;
         int x1 = event->pos().x(), y1 = event->pos().y();
         int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
@@ -302,11 +322,18 @@ protected:
     {
         double wx, wy;
         pixelToWorld(sx, sy, wx, wy);
-        if (_mouse_left_down)
-            _grid.setOccupied(wx, wy, _brush_radius);
-        else if (_mouse_right_down)
+        if (_mouse_right_down)
             _grid.setFree(wx, wy, _brush_radius);
+        else if (_mouse_left_down) {
+            if (_tool_mode == TOOL_DRAW)
+                _grid.setOccupied(wx, wy, _brush_radius);
+            else
+                _grid.setFree(wx, wy, _brush_radius);
+        }
     }
+
+    void enterEvent(QEvent*) override { _mouse_inside = true; update(); }
+    void leaveEvent(QEvent*) override { _mouse_inside = false; update(); }
 
     void wheelEvent(QWheelEvent* event) override
     {
@@ -339,11 +366,15 @@ private:
     OccupancyGridMap _grid;
     double _zoom = 0.375;
     int _center_x = 0, _center_y = 0;
-    double _brush_radius = 0.15;
+    double _brush_radius = 0.5;
+    ToolMode _tool_mode = TOOL_DRAW;
     bool _mouse_left_down = false;
     bool _mouse_right_down = false;
     int _last_mouse_x = 0;
     int _last_mouse_y = 0;
+    int _mouse_x = 0;
+    int _mouse_y = 0;
+    bool _mouse_inside = false;
     std::vector<ObstaclePtr> _obstacles;
     ViaPointContainer _via_points;
     RobotFootprintModelPtr _robot_model;
@@ -453,19 +484,33 @@ int main(int argc, char* argv[])
     QObject::connect(editConfigBtn, &QPushButton::clicked, display, &TebDisplayWidget::editConfig);
     layout->addWidget(editConfigBtn);
 
-    // Brush radius control
-    QHBoxLayout* brushRow = new QHBoxLayout;
-    QLabel* brushLabel = new QLabel("Brush (m):");
-    QDoubleSpinBox* brushSpin = new QDoubleSpinBox;
-    brushSpin->setRange(0.05, 1.0);
-    brushSpin->setSingleStep(0.05);
-    brushSpin->setValue(0.15);
-    brushSpin->setDecimals(2);
-    QObject::connect(brushSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-        display, &TebDisplayWidget::setBrushRadius);
-    brushRow->addWidget(brushLabel);
-    brushRow->addWidget(brushSpin);
-    layout->addLayout(brushRow);
+    // Tool mode + Brush size control
+    QHBoxLayout* toolRow = new QHBoxLayout;
+    QPushButton* drawBtn = new QPushButton("Draw");
+    QPushButton* eraseBtn = new QPushButton("Erase");
+    drawBtn->setCheckable(true);
+    eraseBtn->setCheckable(true);
+    drawBtn->setChecked(true);
+    QButtonGroup* toolGroup = new QButtonGroup;
+    toolGroup->addButton(drawBtn, TOOL_DRAW);
+    toolGroup->addButton(eraseBtn, TOOL_ERASE);
+    QObject::connect(toolGroup, &QButtonGroup::idClicked,
+        display, &TebDisplayWidget::setToolMode);
+    toolRow->addWidget(drawBtn);
+    toolRow->addWidget(eraseBtn);
+
+    toolRow->addWidget(new QLabel("  Size:"));
+    QSlider* brushSizeSlider = new QSlider(Qt::Horizontal);
+    brushSizeSlider->setRange(0, BRUSH_SIZE_COUNT - 1);
+    brushSizeSlider->setValue(2); // default 0.5m
+    QLabel* brushSizeLabel = new QLabel("0.5m");
+    QObject::connect(brushSizeSlider, &QSlider::valueChanged, display, &TebDisplayWidget::setBrushSizeIdx);
+    QObject::connect(brushSizeSlider, &QSlider::valueChanged, [brushSizeLabel](int idx) {
+        brushSizeLabel->setText(QString("%1m").arg(BRUSH_SIZES[idx], 0, 'f', 1));
+    });
+    toolRow->addWidget(brushSizeSlider);
+    toolRow->addWidget(brushSizeLabel);
+    layout->addLayout(toolRow);
 
     // Clear Grid button
     QPushButton* clearBtn = new QPushButton("Clear Grid");
