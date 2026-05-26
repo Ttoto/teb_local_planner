@@ -27,15 +27,7 @@ cd build && cmake .. && make -j$(nproc)
 ./build/teb
 ```
 
-启动后显示 Qt5 窗口，包含:
-- **轨迹显示区** (500x500) — 实时绘制规划路径
-- **Start Pose** — 起点 x/y (QDoubleSpinBox) 和 theta (QSlider, -π ~ π)
-- **Goal Pose** — 终点 x/y (QDoubleSpinBox) 和 theta (QSlider, -π ~ π)
-- **Edit Config** 按钮 — 打开 JSON 编辑器，直接修改所有 ~80 个 TEB 参数，保存后即时生效
-
-首次运行自动生成 `teb_config.json`（包含所有默认参数），后续启动自动加载。
-
-![example](example.png)
+![example](screenshot.png)
 
 ## 库调用流程
 
@@ -141,3 +133,8 @@ planner.getFullTrajectory(path);
 2. 设 **Tier 2** 匹配环境（窄道 vs 开阔空间）
 3. 用 **`Edit Config` 按钮**实时调整 Tier 3，每次只改一个权重
 4. 只有 CPU 告警或轨迹粗糙时才动 Tier 4
+
+
+### Acknowledge
+https://github.com/linyicheng1/teb_local_planner
+https://github.com/rst-tu-dortmund/teb_local_planner
