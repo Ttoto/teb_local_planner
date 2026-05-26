@@ -12,6 +12,7 @@
 #include <QPlainTextEdit>
 #include <QImage>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <cmath>
 #include <fstream>
 
@@ -33,8 +34,11 @@ public:
         : QWidget(parent)
         , _start(-2, 0, 0)
         , _end(2, 0, 0)
-        , _image(1000, 1000, QImage::Format_RGB888)
-        , _grid(0.05, 100, 100, -2.5, -2.5)
+        , _image(1500, 1500, QImage::Format_RGB888)
+        , _grid(0.05, 400, 400, -10.0, -10.0)
+        , _zoom(0.375)
+        , _center_x(0)
+        , _center_y(0)
     {
         _image.fill(Qt::gray);
 
@@ -60,6 +64,25 @@ public:
     ~TebDisplayWidget()
     {
         delete _planner;
+    }
+
+public slots:
+    void setZoom(int percent)
+    {
+        _zoom = percent / 100.0;
+    }
+
+private:
+    double getScale() const { return 200.0 * _zoom; }
+    void worldToPixel(double wx, double wy, int& sx, int& sy) const {
+        double s = getScale();
+        sx = static_cast<int>(wx * s + 750.0 + _center_x);
+        sy = static_cast<int>(wy * s + 750.0 + _center_y);
+    }
+    void pixelToWorld(int sx, int sy, double& wx, double& wy) const {
+        double s = getScale();
+        wx = (sx - 750.0 - _center_x) / s;
+        wy = (sy - 750.0 - _center_y) / s;
     }
 
 public slots:
@@ -130,35 +153,44 @@ public slots:
         _image.fill(Qt::gray);
         QPainter painter(&_image);
 
-        // Draw grid: occupied cells
+        double s = getScale();
         int gw = _grid.getWidth(), gh = _grid.getHeight();
         double res = _grid.getResolution();
         double ox = _grid.getOriginX(), oy = _grid.getOriginY();
-        int cell_px = static_cast<int>(std::ceil(res * 200.0));
-        for (int iy = 0; iy < gh; ++iy) {
-            for (int ix = 0; ix < gw; ++ix) {
+
+        // Draw grid: occupied cells (skip cells outside viewport for performance)
+        int cell_px = static_cast<int>(std::ceil(res * s));
+        int min_ix = std::max(0, static_cast<int>(std::ceil((-750.0 - _center_x - ox) / (res * s))));
+        int max_ix = std::min(gw - 1, static_cast<int>(std::floor((750.0 - _center_x - ox) / (res * s))));
+        int min_iy = std::max(0, static_cast<int>(std::ceil((-750.0 - _center_y - oy) / (res * s))));
+        int max_iy = std::min(gh - 1, static_cast<int>(std::floor((750.0 - _center_y - oy) / (res * s))));
+        for (int iy = min_iy; iy <= max_iy; ++iy) {
+            for (int ix = min_ix; ix <= max_ix; ++ix) {
                 if (_grid.isOccupied(ix, iy)) {
-                    int sx = static_cast<int>((ox + ix * res) * 200.0 + 500);
-                    int sy = static_cast<int>((oy + iy * res) * 200.0 + 500);
+                    int sx, sy;
+                    worldToPixel(ox + ix * res, oy + iy * res, sx, sy);
                     painter.fillRect(sx, sy, cell_px, cell_px, QColor(140, 50, 20));
                 }
             }
         }
 
         // Draw grid lines (1m spacing = every 20 cells at 0.05m res)
+        int line_step = 10;
         painter.setPen(QPen(QColor(40, 40, 40), 1));
-        for (int iy = 0; iy <= gh; iy += 20) {
-            int sy = static_cast<int>((oy + iy * res) * 200.0 + 500);
-            painter.drawLine(0, sy, 1000, sy);
+        for (int iy = 0; iy <= gh; iy += line_step) {
+            double wy = oy + iy * res;
+            int hx, hy; worldToPixel(0, wy, hx, hy);
+            painter.drawLine(0, hy, 1500, hy);
         }
-        for (int ix = 0; ix <= gw; ix += 20) {
-            int sx = static_cast<int>((ox + ix * res) * 200.0 + 500);
-            painter.drawLine(sx, 0, sx, 1000);
+        for (int ix = 0; ix <= gw; ix += line_step) {
+            double wx = ox + ix * res;
+            int vx, vy; worldToPixel(wx, 0, vx, vy);
+            painter.drawLine(vx, 0, vx, 1500);
         }
 
         auto drawArrow = [&](int cx, int cy, double theta_rad, const QColor& color) {
-            const int arrow_len = 30;
-            const int head_len = 12;
+            const int arrow_len = 20;
+            const int head_len = 8;
             int tip_x  = cx + static_cast<int>(std::cos(theta_rad) * arrow_len);
             int tip_y  = cy + static_cast<int>(std::sin(theta_rad) * arrow_len);
             int base_x = cx - static_cast<int>(std::cos(theta_rad) * arrow_len);
@@ -180,12 +212,11 @@ public slots:
             painter.drawPolygon(head, 3);
         };
 
-        int sx = static_cast<int>(_start_x * 200.0 + 500);
-        int sy = static_cast<int>(_start_y * 200.0 + 500);
+        int sx, sy, gx, gy;
+        worldToPixel(_start_x, _start_y, sx, sy);
         drawArrow(sx, sy, _start_theta * 0.01, Qt::green);
 
-        int gx = static_cast<int>(_end_x * 200.0 + 500);
-        int gy = static_cast<int>(_end_y * 200.0 + 500);
+        worldToPixel(_end_x, _end_y, gx, gy);
         drawArrow(gx, gy, _end_theta * 0.01, Qt::blue);
 
         _start.x() = _start_x;
@@ -197,18 +228,25 @@ public slots:
 
         try
         {
+            // Draw original planned line (straight from start to goal)
+            painter.setPen(QPen(QColor(255, 200, 50), 2));
+            int psx, psy, pgx, pgy;
+            worldToPixel(_start_x, _start_y, psx, psy);
+            worldToPixel(_end_x, _end_y, pgx, pgy);
+            painter.drawLine(psx, psy, pgx, pgy);
+
             _planner->plan(_start, _end);
 
             std::vector<Eigen::Vector3f> path;
             _planner->getFullTrajectory(path);
 
+            // Draw optimized trajectory
             painter.setPen(QPen(Qt::white, 1));
             for (size_t i = 0; i + 1 < path.size(); ++i)
             {
-                int x = static_cast<int>(path[i][0] * 200.f + 500);
-                int y = static_cast<int>(path[i][1] * 200.f + 500);
-                int nx = static_cast<int>(path[i + 1][0] * 200.f + 500);
-                int ny = static_cast<int>(path[i + 1][1] * 200.f + 500);
+                int x, y, nx, ny;
+                worldToPixel(path[i][0], path[i][1], x, y);
+                worldToPixel(path[i + 1][0], path[i + 1][1], nx, ny);
                 painter.drawLine(x, y, nx, ny);
             }
         }
@@ -262,12 +300,29 @@ protected:
 
     void applyBrush(int sx, int sy)
     {
-        double wx = (sx - 500.0) / 200.0;
-        double wy = (sy - 500.0) / 200.0;
+        double wx, wy;
+        pixelToWorld(sx, sy, wx, wy);
         if (_mouse_left_down)
             _grid.setOccupied(wx, wy, _brush_radius);
         else if (_mouse_right_down)
             _grid.setFree(wx, wy, _brush_radius);
+    }
+
+    void wheelEvent(QWheelEvent* event) override
+    {
+        int sx = static_cast<int>(event->position().x()), sy = static_cast<int>(event->position().y());
+        double wx, wy;
+        pixelToWorld(sx, sy, wx, wy);
+
+        double old_zoom = _zoom;
+        double factor = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
+        _zoom = std::max(0.05, std::min(2.0, _zoom * factor));
+
+        // Keep the world point under cursor fixed
+        _center_x = sx - static_cast<int>(wx * getScale() + 750.0);
+        _center_y = sy - static_cast<int>(wy * getScale() + 750.0);
+
+        update();
     }
 
 private:
@@ -282,6 +337,8 @@ private:
     QTimer* _timer;
     std::string _configFile;
     OccupancyGridMap _grid;
+    double _zoom = 0.375;
+    int _center_x = 0, _center_y = 0;
     double _brush_radius = 0.15;
     bool _mouse_left_down = false;
     bool _mouse_right_down = false;
@@ -308,20 +365,20 @@ int main(int argc, char* argv[])
     window.setWindowTitle("TEB Local Planner");
 
     TebDisplayWidget* display = new TebDisplayWidget;
-    display->setFixedSize(1000, 1000);
+    display->setFixedSize(1500, 1500);
 
     // --- Start pose controls ---
     QLabel* startTitle = new QLabel("<b>Start Pose</b>");
 
     QDoubleSpinBox* startX = new QDoubleSpinBox;
-    startX->setRange(-5.0, 5.0);
+    startX->setRange(-10.0, 10.0);
     startX->setSingleStep(0.1);
     startX->setValue(-2.0);
     startX->setDecimals(1);
     QLabel* startXLabel = new QLabel("x:");
 
     QDoubleSpinBox* startY = new QDoubleSpinBox;
-    startY->setRange(-5.0, 5.0);
+    startY->setRange(-10.0, 10.0);
     startY->setSingleStep(0.1);
     startY->setValue(0.0);
     startY->setDecimals(1);
@@ -335,14 +392,14 @@ int main(int argc, char* argv[])
     QLabel* endTitle = new QLabel("<b>Goal Pose</b>");
 
     QDoubleSpinBox* endX = new QDoubleSpinBox;
-    endX->setRange(-5.0, 5.0);
+    endX->setRange(-10.0, 10.0);
     endX->setSingleStep(0.1);
     endX->setValue(2.0);
     endX->setDecimals(1);
     QLabel* endXLabel = new QLabel("x:");
 
     QDoubleSpinBox* endY = new QDoubleSpinBox;
-    endY->setRange(-5.0, 5.0);
+    endY->setRange(-10.0, 10.0);
     endY->setSingleStep(0.1);
     endY->setValue(0.0);
     endY->setDecimals(1);
@@ -414,6 +471,22 @@ int main(int argc, char* argv[])
     QPushButton* clearBtn = new QPushButton("Clear Grid");
     QObject::connect(clearBtn, &QPushButton::clicked, display, &TebDisplayWidget::clearGrid);
     layout->addWidget(clearBtn);
+
+    // Zoom control
+    QHBoxLayout* zoomRow = new QHBoxLayout;
+    QLabel* zoomLabel = new QLabel("Zoom:");
+    QSlider* zoomSlider = new QSlider(Qt::Horizontal);
+    zoomSlider->setRange(5, 200);
+    zoomSlider->setValue(38);
+    QLabel* zoomValue = new QLabel("0.38x");
+    zoomRow->addWidget(zoomLabel);
+    zoomRow->addWidget(zoomSlider);
+    zoomRow->addWidget(zoomValue);
+    QObject::connect(zoomSlider, &QSlider::valueChanged, display, &TebDisplayWidget::setZoom);
+    QObject::connect(zoomSlider, &QSlider::valueChanged, [zoomValue](int v) {
+        zoomValue->setText(QString("%1x").arg(v / 100.0, 0, 'f', 2));
+    });
+    layout->addLayout(zoomRow);
 
     window.setLayout(layout);
     window.show();
