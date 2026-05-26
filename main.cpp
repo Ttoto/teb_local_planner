@@ -168,10 +168,14 @@ public slots:
 
         // Draw grid: occupied cells (skip cells outside viewport for performance)
         int cell_px = static_cast<int>(std::ceil(res * s));
-        int min_ix = std::max(0, static_cast<int>(std::ceil((-750.0 - _center_x - ox) / (res * s))));
-        int max_ix = std::min(gw - 1, static_cast<int>(std::floor((750.0 - _center_x - ox) / (res * s))));
-        int min_iy = std::max(0, static_cast<int>(std::ceil((-750.0 - _center_y - oy) / (res * s))));
-        int max_iy = std::min(gh - 1, static_cast<int>(std::floor((750.0 - _center_y - oy) / (res * s))));
+        double wx_min = (0 - 750.0 - _center_x) / s;
+        double wx_max = (1500 - 750.0 - _center_x) / s;
+        double wy_min = (0 - 750.0 - _center_y) / s;
+        double wy_max = (1500 - 750.0 - _center_y) / s;
+        int min_ix = std::max(0, static_cast<int>(std::floor((wx_min - ox) / res)));
+        int max_ix = std::min(gw - 1, static_cast<int>(std::ceil((wx_max - ox) / res)));
+        int min_iy = std::max(0, static_cast<int>(std::floor((wy_min - oy) / res)));
+        int max_iy = std::min(gh - 1, static_cast<int>(std::ceil((wy_max - oy) / res)));
         for (int iy = min_iy; iy <= max_iy; ++iy) {
             for (int ix = min_ix; ix <= max_ix; ++ix) {
                 if (_grid.isOccupied(ix, iy)) {
