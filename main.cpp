@@ -123,7 +123,6 @@ public slots:
     {
         _grid.clear();
         _grid.extractObstacles(_obstacles);
-        _grid_modified = true;
     }
 
     void editConfig()
@@ -342,11 +341,8 @@ public slots:
 
     void runPlanner()
     {
-        if (_grid_modified && _planner->teb().isInit())
-            _planner->clearPlanner();
-
+        _planner->clearPlanner();
         _planner->plan(_start, _end);
-        _grid_modified = false;
 
         if (_astarCostLabel)
             _astarCostLabel->setText(QString("A* path len: %1 m").arg(_planner->getAStarPathCost(), 0, 'f', 2));
@@ -421,7 +417,6 @@ protected:
             else
                 _grid.setFree(wx, wy, _brush_radius);
         }
-        _grid_modified = true;
     }
 
     void enterEvent(QEvent*) override { _mouse_inside = true; update(); }
@@ -462,7 +457,6 @@ private:
     ToolMode _tool_mode = TOOL_DRAW;
     bool _mouse_left_down = false;
     bool _mouse_right_down = false;
-    bool _grid_modified = false;
     int _last_mouse_x = 0;
     int _last_mouse_y = 0;
     int _mouse_x = 0;
@@ -482,7 +476,6 @@ private:
         delete _planner;
         _planner = new TebOptimalPlanner(_config, &_obstacles, _robot_model, _visual, &_via_points);
         _planner->setGrid(&_grid);
-        _grid_modified = true;
     }
 };
 

@@ -147,9 +147,9 @@ struct Point
             , z(0.0)  {
     }
     Point(const Point& p)
-            : x(0.0)
-            , y(0.0)
-            , z(0.0)  {
+            : x(p.x)
+            , y(p.y)
+            , z(p.z)  {
     }
 
     double x;
