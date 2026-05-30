@@ -250,6 +250,13 @@ namespace teb_local_planner
 
         void setGrid(OccupancyGridMap* grid) {grid_ = grid;}
         const std::vector<Eigen::Vector2d>& getAStarPath() const {return astar_path_;}
+        double getAStarPathCost() const {
+            double cost = 0;
+            for (size_t i = 1; i < astar_path_.size(); ++i)
+                cost += (astar_path_[i] - astar_path_[i-1]).norm();
+            return cost;
+        }
+        double getAStarTEBCost() const {return astar_teb_cost_;}
 
         //@}
 
@@ -641,6 +648,7 @@ namespace teb_local_planner
         const ViaPointContainer* via_points_; //!< Store via points for planning
 
         double cost_; //!< Store cost value of the current hyper-graph
+        double astar_teb_cost_; //!< Store TEB cost of the A*-initialized trajectory (before optimization)
         RotType prefer_rotdir_; //!< Store whether to prefer a specific initial rotation in optimization (might be activated in case the robot oscillates)
 
         // internal objects (memory management owned)

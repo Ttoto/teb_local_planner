@@ -10,7 +10,7 @@ namespace teb_local_planner
 
 // ============== Implementation ===================
 
-    TebOptimalPlanner::TebOptimalPlanner() : cfg_(NULL), obstacles_(NULL), via_points_(NULL), grid_(NULL), cost_(HUGE_VAL), prefer_rotdir_(RotType::none),
+    TebOptimalPlanner::TebOptimalPlanner() : cfg_(NULL), obstacles_(NULL), via_points_(NULL), grid_(NULL), cost_(HUGE_VAL), astar_teb_cost_(HUGE_VAL), prefer_rotdir_(RotType::none),
                                              robot_model_(new PointRobotFootprint()), initialized_(false), optimized_(false)
     {
     }
@@ -41,6 +41,7 @@ namespace teb_local_planner
         robot_model_ = robot_model;
         via_points_ = via_points;
         cost_ = HUGE_VAL;
+        astar_teb_cost_ = HUGE_VAL;
         prefer_rotdir_ = RotType::none;
         setVisualization(visual);
 
@@ -320,8 +321,16 @@ namespace teb_local_planner
         else
             vel_goal_.first = true; // we just reactivate and use the previously set velocity (should be zero if nothing was modified)
 
+        // Compute TEB cost of the A*-initialized trajectory before optimization
+        astar_teb_cost_ = HUGE_VAL;
+        if (teb_.sizePoses() > 0)
+        {
+            computeCurrentCost();
+            astar_teb_cost_ = cost_;
+        }
+
         // now optimize
-        return optimizeTEB(cfg_->optim.no_inner_iterations, cfg_->optim.no_outer_iterations);
+        return optimizeTEB(cfg_->optim.no_inner_iterations, cfg_->optim.no_outer_iterations, true);
     }
 
 

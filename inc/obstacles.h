@@ -924,7 +924,24 @@ namespace teb_local_planner
         // implements getMinimumDistance() of the base class
         virtual double getMinimumDistance(const Eigen::Vector2d& position) const
         {
-            return distance_point_to_polygon_2d(position, vertices_);
+            double dist = distance_point_to_polygon_2d(position, vertices_);
+            if (noVertices() > 2)
+            {
+                // Point-in-polygon test (ray casting).
+                // If the point is inside, return negative signed distance
+                // so penaltyBoundFromBelow fires correctly.
+                int i, j;
+                bool inside = false;
+                for (i = 0, j = noVertices()-1; i < noVertices(); j = i++)
+                {
+                    if ( ((vertices_[i].y() > position.y()) != (vertices_[j].y() > position.y())) &&
+                         (position.x() < (vertices_[j].x()-vertices_[i].x()) * (position.y()-vertices_[i].y()) / (vertices_[j].y()-vertices_[i].y()) + vertices_[i].x()) )
+                        inside = !inside;
+                }
+                if (inside)
+                    return -dist;
+            }
+            return dist;
         }
 
         // implements getMinimumDistance() of the base class
@@ -947,7 +964,22 @@ namespace teb_local_planner
         {
             Point2dContainer pred_vertices;
             predictVertices(t, pred_vertices);
-            return distance_point_to_polygon_2d(position, pred_vertices);
+            double dist = distance_point_to_polygon_2d(position, pred_vertices);
+            int nv = static_cast<int>(pred_vertices.size());
+            if (nv > 2)
+            {
+                int i, j;
+                bool inside = false;
+                for (i = 0, j = nv-1; i < nv; j = i++)
+                {
+                    if ( ((pred_vertices[i].y() > position.y()) != (pred_vertices[j].y() > position.y())) &&
+                         (position.x() < (pred_vertices[j].x()-pred_vertices[i].x()) * (position.y()-pred_vertices[i].y()) / (pred_vertices[j].y()-pred_vertices[i].y()) + pred_vertices[i].x()) )
+                        inside = !inside;
+                }
+                if (inside)
+                    return -dist;
+            }
+            return dist;
         }
 
         // implements getMinimumSpatioTemporalDistance() of the base class

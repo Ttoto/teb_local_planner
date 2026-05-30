@@ -49,7 +49,7 @@ public:
         _image.fill(Qt::gray);
 
         _grid.extractObstacles(_obstacles);
-        _robot_model = boost::make_shared<CircularRobotFootprint>(0.4);
+        _robot_model = boost::make_shared<CircularRobotFootprint>(0.2);
         _visual = TebVisualizationPtr(new TebVisualization(_config));
 
         _configFile = "teb_config.json";
@@ -64,7 +64,7 @@ public:
         _planner->setGrid(&_grid);
 
         _timer = new QTimer(this);
-        connect(_timer, &QTimer::timeout, this, &TebDisplayWidget::runPlanner);
+        connect(_timer, &QTimer::timeout, this, &TebDisplayWidget::updateDisplay);
         _timer->start(30);
     }
 
@@ -112,6 +112,13 @@ public slots:
     void setToolMode(int mode) { _tool_mode = static_cast<ToolMode>(mode); }
     void setBrushSizeIdx(int idx) { _brush_radius = BRUSH_SIZES[idx]; }
 
+    void setCostLabels(QLabel* astarLabel, QLabel* astarTebLabel, QLabel* tebLabel)
+    {
+        _astarCostLabel = astarLabel;
+        _astarTebCostLabel = astarTebLabel;
+        _tebCostLabel = tebLabel;
+    }
+
     void clearGrid()
     {
         _grid.clear();
@@ -156,7 +163,7 @@ public slots:
         delete dialog;
     }
 
-    void runPlanner()
+    void updateDisplay()
     {
         _grid.extractObstacles(_obstacles);
 
@@ -200,6 +207,38 @@ public slots:
             double wx = ox + ix * res;
             int vx, vy; worldToPixel(wx, 0, vx, vy);
             painter.drawLine(vx, 0, vx, 1500);
+        }
+
+        // Draw polygon obstacle convex hulls
+        for (const auto& obs : _obstacles) {
+            auto poly = boost::dynamic_pointer_cast<PolygonObstacle>(obs);
+            if (!poly || poly->noVertices() < 3)
+                continue;
+            const auto& verts = poly->vertices();
+            // Draw edges in yellow
+            painter.setPen(QPen(QColor(255, 255, 0), 2));
+            for (int i = 0; i < (int)verts.size() - 1; ++i) {
+                int x1, y1, x2, y2;
+                worldToPixel(verts[i].x(), verts[i].y(), x1, y1);
+                worldToPixel(verts[i+1].x(), verts[i+1].y(), x2, y2);
+                painter.drawLine(x1, y1, x2, y2);
+            }
+            // Close the polygon
+            {
+                int x1, y1, x2, y2;
+                worldToPixel(verts.back().x(), verts.back().y(), x1, y1);
+                worldToPixel(verts.front().x(), verts.front().y(), x2, y2);
+                painter.drawLine(x1, y1, x2, y2);
+            }
+            // Draw vertices as orange dots
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(255, 100, 0));
+            for (const auto& v : verts) {
+                int vx, vy;
+                worldToPixel(v.x(), v.y(), vx, vy);
+                painter.drawEllipse(QPoint(vx, vy), 4, 4);
+            }
+            painter.setBrush(Qt::NoBrush);
         }
 
         auto drawArrow = [&](int cx, int cy, double theta_rad, const QColor& color) {
@@ -249,12 +288,6 @@ public slots:
             worldToPixel(_end_x, _end_y, pgx, pgy);
             painter.drawLine(psx, psy, pgx, pgy);
 
-            if (_grid_modified && _planner->teb().isInit())
-                _planner->clearPlanner();
-
-            _planner->plan(_start, _end);
-            _grid_modified = false;
-
             // Draw A* initialization path (cyan)
             const auto& astar_path = _planner->getAStarPath();
             if (!astar_path.empty())
@@ -281,6 +314,22 @@ public slots:
                 worldToPixel(path[i + 1][0], path[i + 1][1], nx, ny);
                 painter.drawLine(x, y, nx, ny);
             }
+
+            // Draw g2o vertex positions as dots
+            painter.setPen(Qt::NoPen);
+            for (size_t i = 0; i < path.size(); ++i)
+            {
+                int vx, vy;
+                worldToPixel(path[i][0], path[i][1], vx, vy);
+                if (i == 0)
+                    painter.setBrush(Qt::green);   // start vertex (fixed)
+                else if (i == path.size() - 1)
+                    painter.setBrush(Qt::blue);    // goal vertex (fixed)
+                else
+                    painter.setBrush(QColor(255, 0, 255)); // free vertex (magenta)
+                painter.drawEllipse(QPoint(vx, vy), 4, 4);
+            }
+            painter.setBrush(Qt::NoBrush);
         }
         catch (...)
         {
@@ -288,6 +337,24 @@ public slots:
         }
 
         painter.end();
+        update();
+    }
+
+    void runPlanner()
+    {
+        if (_grid_modified && _planner->teb().isInit())
+            _planner->clearPlanner();
+
+        _planner->plan(_start, _end);
+        _grid_modified = false;
+
+        if (_astarCostLabel)
+            _astarCostLabel->setText(QString("A* path len: %1 m").arg(_planner->getAStarPathCost(), 0, 'f', 2));
+        if (_astarTebCostLabel)
+            _astarTebCostLabel->setText(QString("A* TEB cost: %1").arg(_planner->getAStarTEBCost(), 0, 'f', 2));
+        if (_tebCostLabel)
+            _tebCostLabel->setText(QString("TEB cost: %1").arg(_planner->getCurrentCost(), 0, 'f', 2));
+
         update();
     }
 
@@ -406,12 +473,16 @@ private:
     RobotFootprintModelPtr _robot_model;
     TebVisualizationPtr _visual;
     TebOptimalPlanner* _planner;
+    QLabel* _astarCostLabel = nullptr;
+    QLabel* _astarTebCostLabel = nullptr;
+    QLabel* _tebCostLabel = nullptr;
 
     void recreatePlanner()
     {
         delete _planner;
         _planner = new TebOptimalPlanner(_config, &_obstacles, _robot_model, _visual, &_via_points);
         _planner->setGrid(&_grid);
+        _grid_modified = true;
     }
 };
 
@@ -481,12 +552,11 @@ int main(int argc, char* argv[])
         endThetaLabel->setText(QString("theta: %1").arg(v * 0.01, 0, 'f', 2));
     });
 
-    // --- Layout ---
-    QVBoxLayout* layout = new QVBoxLayout;
-    layout->addWidget(display);
+    // --- Right panel layout ---
+    QVBoxLayout* panelLayout = new QVBoxLayout;
 
     // Start pose row
-    layout->addWidget(startTitle);
+    panelLayout->addWidget(startTitle);
     QHBoxLayout* startRow = new QHBoxLayout;
     startRow->addWidget(startXLabel);
     startRow->addWidget(startX);
@@ -494,10 +564,10 @@ int main(int argc, char* argv[])
     startRow->addWidget(startY);
     startRow->addWidget(startThetaLabel);
     startRow->addWidget(startThetaSlider);
-    layout->addLayout(startRow);
+    panelLayout->addLayout(startRow);
 
     // Goal pose row
-    layout->addWidget(endTitle);
+    panelLayout->addWidget(endTitle);
     QHBoxLayout* endRow = new QHBoxLayout;
     endRow->addWidget(endXLabel);
     endRow->addWidget(endX);
@@ -505,11 +575,11 @@ int main(int argc, char* argv[])
     endRow->addWidget(endY);
     endRow->addWidget(endThetaLabel);
     endRow->addWidget(endThetaSlider);
-    layout->addLayout(endRow);
+    panelLayout->addLayout(endRow);
 
     QPushButton* editConfigBtn = new QPushButton("Edit Config");
     QObject::connect(editConfigBtn, &QPushButton::clicked, display, &TebDisplayWidget::editConfig);
-    layout->addWidget(editConfigBtn);
+    panelLayout->addWidget(editConfigBtn);
 
     // Tool mode + Brush size control
     QHBoxLayout* toolRow = new QHBoxLayout;
@@ -537,12 +607,17 @@ int main(int argc, char* argv[])
     });
     toolRow->addWidget(brushSizeSlider);
     toolRow->addWidget(brushSizeLabel);
-    layout->addLayout(toolRow);
+    panelLayout->addLayout(toolRow);
+
+    // Plan button
+    QPushButton* planBtn = new QPushButton("Plan");
+    QObject::connect(planBtn, &QPushButton::clicked, display, &TebDisplayWidget::runPlanner);
+    panelLayout->addWidget(planBtn);
 
     // Clear Grid button
     QPushButton* clearBtn = new QPushButton("Clear Grid");
     QObject::connect(clearBtn, &QPushButton::clicked, display, &TebDisplayWidget::clearGrid);
-    layout->addWidget(clearBtn);
+    panelLayout->addWidget(clearBtn);
 
     // Zoom control
     QHBoxLayout* zoomRow = new QHBoxLayout;
@@ -558,10 +633,30 @@ int main(int argc, char* argv[])
     QObject::connect(zoomSlider, &QSlider::valueChanged, [zoomValue](int v) {
         zoomValue->setText(QString("%1x").arg(v / 100.0, 0, 'f', 2));
     });
-    layout->addLayout(zoomRow);
+    panelLayout->addLayout(zoomRow);
+
+    // Cost display
+    QLabel* astarCostLabel = new QLabel("A* path len: --");
+    QLabel* astarTebCostLabel = new QLabel("A* TEB cost: --");
+    QLabel* tebCostLabel = new QLabel("TEB cost: --");
+    panelLayout->addWidget(astarCostLabel);
+    panelLayout->addWidget(astarTebCostLabel);
+    panelLayout->addWidget(tebCostLabel);
+    display->setCostLabels(astarCostLabel, astarTebCostLabel, tebCostLabel);
+
+    panelLayout->addStretch();
+
+    // --- Main layout: display left, panel right ---
+    QHBoxLayout* layout = new QHBoxLayout;
+    layout->addWidget(display);
+    layout->addLayout(panelLayout);
 
     window.setLayout(layout);
+    window.resize(1800, 1520);
     window.show();
+
+    // Run initial plan
+    display->runPlanner();
 
     return app.exec();
 }

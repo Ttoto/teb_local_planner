@@ -233,8 +233,8 @@ namespace teb_local_planner
 
             // Obstacles
 
-            obstacles.min_obstacle_dist = 0.5;
-            obstacles.inflation_dist = 0.6;
+            obstacles.min_obstacle_dist = 0.2;
+            obstacles.inflation_dist = 0.3;
             obstacles.dynamic_obstacle_inflation_dist = 0.6;
             obstacles.include_dynamic_obstacles = true;
             obstacles.include_costmap_obstacles = true;
@@ -265,7 +265,7 @@ namespace teb_local_planner
             optim.weight_kinematics_turning_radius = 1;
             optim.weight_optimaltime = 1;
             optim.weight_shortest_path = 0;
-            optim.weight_obstacle = 50;
+            optim.weight_obstacle = 110;
             optim.weight_inflation = 0.1;
             optim.weight_dynamic_obstacle = 50;
             optim.weight_dynamic_obstacle_inflation = 0.1;
