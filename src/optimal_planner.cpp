@@ -10,7 +10,7 @@ namespace teb_local_planner
 
 // ============== Implementation ===================
 
-    TebOptimalPlanner::TebOptimalPlanner() : cfg_(NULL), obstacles_(NULL), via_points_(NULL), cost_(HUGE_VAL), prefer_rotdir_(RotType::none),
+    TebOptimalPlanner::TebOptimalPlanner() : cfg_(NULL), obstacles_(NULL), via_points_(NULL), grid_(NULL), cost_(HUGE_VAL), prefer_rotdir_(RotType::none),
                                              robot_model_(new PointRobotFootprint()), initialized_(false), optimized_(false)
     {
     }
@@ -37,6 +37,7 @@ namespace teb_local_planner
 
         cfg_ = &cfg;
         obstacles_ = obstacles;
+        grid_ = nullptr;
         robot_model_ = robot_model;
         via_points_ = via_points;
         cost_ = HUGE_VAL;
@@ -239,8 +240,65 @@ namespace teb_local_planner
     {
         if (!teb_.isInit())
         {
-            // init trajectory
-            teb_.initTrajectoryToGoal(start, goal, 0, cfg_->robot.max_vel_x, cfg_->trajectory.min_samples, cfg_->trajectory.allow_init_with_backwards_motion); // 0 intermediate samples, but dt=1 -> autoResize will add more samples before calling first optimization
+            // Try A* initialization if grid is available
+            bool astar_ok = false;
+            if (grid_)
+            {
+                int start_gx, start_gy, goal_gx, goal_gy;
+                if (grid_->worldToGrid(start.x(), start.y(), start_gx, start_gy) &&
+                    grid_->worldToGrid(goal.x(), goal.y(), goal_gx, goal_gy))
+                {
+                    auto cells = grid_->searchPathAStar(start_gx, start_gy, goal_gx, goal_gy, cfg_->obstacles.min_obstacle_dist);
+                    if (!cells.empty())
+                    {
+                        // Convert cells to world coordinates
+                        std::vector<Eigen::Vector2d> world_path;
+                        for (auto& [gx, gy] : cells)
+                        {
+                            double wx, wy;
+                            grid_->gridToWorld(gx, gy, wx, wy);
+                            world_path.emplace_back(wx, wy);
+                        }
+
+                        // Subsample to ~0.5m spacing
+                        astar_path_.clear();
+                        astar_path_.push_back(world_path.front());
+                        double accum = 0;
+                        for (size_t i = 1; i + 1 < world_path.size(); ++i)
+                        {
+                            accum += (world_path[i] - world_path[i-1]).norm();
+                            if (accum >= 0.5)
+                            {
+                                astar_path_.push_back(world_path[i]);
+                                accum = 0;
+                            }
+                        }
+                        astar_path_.push_back(world_path.back());
+
+                        // Create PoseStamped vector
+                        std::vector<PoseStamped> initial_plan;
+                        for (const auto& pt : astar_path_)
+                        {
+                            PoseStamped ps;
+                            ps.pose.position.x = pt[0];
+                            ps.pose.position.y = pt[1];
+                            ps.pose.position.z = 0;
+                            ps.pose.orientation.w = 1;
+                            initial_plan.push_back(ps);
+                        }
+
+                        teb_.initTrajectoryToGoal(initial_plan, cfg_->robot.max_vel_x, cfg_->robot.max_vel_theta,
+                                                  true, cfg_->trajectory.min_samples, cfg_->trajectory.allow_init_with_backwards_motion);
+                        astar_ok = true;
+                    }
+                }
+            }
+            if (!astar_ok)
+            {
+                // Fallback: straight-line init
+                teb_.initTrajectoryToGoal(start, goal, 0, cfg_->robot.max_vel_x, cfg_->trajectory.min_samples, cfg_->trajectory.allow_init_with_backwards_motion);
+                astar_path_.clear();
+            }
         }
         else // warm start
         {

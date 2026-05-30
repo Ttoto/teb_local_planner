@@ -61,6 +61,7 @@ public:
             _config.saveToFile(_configFile);
         }
         _planner = new TebOptimalPlanner(_config, &_obstacles, _robot_model, _visual, &_via_points);
+        _planner->setGrid(&_grid);
 
         _timer = new QTimer(this);
         connect(_timer, &QTimer::timeout, this, &TebDisplayWidget::runPlanner);
@@ -115,6 +116,7 @@ public slots:
     {
         _grid.clear();
         _grid.extractObstacles(_obstacles);
+        _grid_modified = true;
     }
 
     void editConfig()
@@ -247,7 +249,25 @@ public slots:
             worldToPixel(_end_x, _end_y, pgx, pgy);
             painter.drawLine(psx, psy, pgx, pgy);
 
+            if (_grid_modified && _planner->teb().isInit())
+                _planner->clearPlanner();
+
             _planner->plan(_start, _end);
+            _grid_modified = false;
+
+            // Draw A* initialization path (cyan)
+            const auto& astar_path = _planner->getAStarPath();
+            if (!astar_path.empty())
+            {
+                painter.setPen(QPen(QColor(0, 200, 255), 3));
+                for (size_t i = 0; i + 1 < astar_path.size(); ++i)
+                {
+                    int x, y, nx, ny;
+                    worldToPixel(astar_path[i][0], astar_path[i][1], x, y);
+                    worldToPixel(astar_path[i+1][0], astar_path[i+1][1], nx, ny);
+                    painter.drawLine(x, y, nx, ny);
+                }
+            }
 
             std::vector<Eigen::Vector3f> path;
             _planner->getFullTrajectory(path);
@@ -334,6 +354,7 @@ protected:
             else
                 _grid.setFree(wx, wy, _brush_radius);
         }
+        _grid_modified = true;
     }
 
     void enterEvent(QEvent*) override { _mouse_inside = true; update(); }
@@ -374,6 +395,7 @@ private:
     ToolMode _tool_mode = TOOL_DRAW;
     bool _mouse_left_down = false;
     bool _mouse_right_down = false;
+    bool _grid_modified = false;
     int _last_mouse_x = 0;
     int _last_mouse_y = 0;
     int _mouse_x = 0;
@@ -389,6 +411,7 @@ private:
     {
         delete _planner;
         _planner = new TebOptimalPlanner(_config, &_obstacles, _robot_model, _visual, &_via_points);
+        _planner->setGrid(&_grid);
     }
 };
 

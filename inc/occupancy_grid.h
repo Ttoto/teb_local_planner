@@ -26,6 +26,10 @@ public:
 
     void extractObstacles(ObstContainer& obstacles) const;
 
+    bool isOccupiedWithInflation(int gx, int gy, double robot_radius) const;
+    std::vector<std::pair<int,int>> searchPathAStar(int start_gx, int start_gy,
+        int goal_gx, int goal_gy, double robot_radius) const;
+
     void clear();
 
     int getWidth() const  { return width_; }

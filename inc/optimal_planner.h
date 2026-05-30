@@ -5,6 +5,7 @@
 #include<boost/smart_ptr.hpp>
 
 // teb stuff
+#include "occupancy_grid.h"
 #include "teb_config.h"
 #include "teb_types.h"
 #include "misc.h"
@@ -245,11 +246,10 @@ namespace teb_local_planner
          */
         void setObstVector(ObstContainer* obst_vector) {obstacles_ = obst_vector;}
 
-        /**
-         * @brief Access the internal obstacle container.
-         * @return Const reference to the obstacle container
-         */
         const ObstContainer& getObstVector() const {return *obstacles_;}
+
+        void setGrid(OccupancyGridMap* grid) {grid_ = grid;}
+        const std::vector<Eigen::Vector2d>& getAStarPath() const {return astar_path_;}
 
         //@}
 
@@ -636,6 +636,8 @@ namespace teb_local_planner
         // external objects (store weak pointers)
         const TebConfig* cfg_; //!< Config class that stores and manages all related parameters
         ObstContainer* obstacles_; //!< Store obstacles that are relevant for planning
+        OccupancyGridMap* grid_; //!< Occupancy grid for A* initialization
+        std::vector<Eigen::Vector2d> astar_path_; //!< Subsampled A* path for visualization
         const ViaPointContainer* via_points_; //!< Store via points for planning
 
         double cost_; //!< Store cost value of the current hyper-graph
