@@ -3,6 +3,8 @@
 #include <cmath>
 #include <queue>
 #include <algorithm>
+#include <map>
+#include <set>
 
 using namespace teb_local_planner;
 
@@ -165,8 +167,8 @@ void OccupancyGridMap::extractObstacles(ObstContainer& obstacles) const {
     std::vector<bool> visited(width_ * height_, false);
     std::vector<std::vector<std::pair<int,int>>> clusters;
 
-    const int dx8[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
-    const int dy8[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
+    const int dx4[4] = {0, 1, 0, -1};
+    const int dy4[4] = {-1, 0, 1, 0};
 
     for (int iy = 0; iy < height_; ++iy) {
         for (int ix = 0; ix < width_; ++ix) {
@@ -182,8 +184,8 @@ void OccupancyGridMap::extractObstacles(ObstContainer& obstacles) const {
                 auto [cx, cy] = q.front(); q.pop();
                 cluster.push_back({cx, cy});
 
-                for (int k = 0; k < 8; ++k) {
-                    int nx = cx + dx8[k], ny = cy + dy8[k];
+                for (int k = 0; k < 4; ++k) {
+                    int nx = cx + dx4[k], ny = cy + dy4[k];
                     if (isInBounds(nx, ny) && isOccupied(nx, ny) &&
                         !visited[ny * width_ + nx]) {
                         visited[ny * width_ + nx] = true;
@@ -201,55 +203,108 @@ void OccupancyGridMap::extractObstacles(ObstContainer& obstacles) const {
             gridToWorld(cluster[0].first, cluster[0].second, wx, wy);
             obstacles.push_back(boost::make_shared<PointObstacle>(wx, wy));
         } else {
-            std::vector<Eigen::Vector2d> points;
-            points.reserve(cluster.size());
+            // Build set of cluster cells for O(log N) membership test
+            std::set<std::pair<int,int>> cell_set;
+            for (auto [ix, iy] : cluster)
+                cell_set.insert({ix, iy});
+
+            // Collect boundary edges: directed segments between grid corners.
+            // A cell edge is on the boundary if the 4-neighbor on that side
+            // is NOT in the cluster.
+            // Map: start corner -> end corner
+            std::map<std::pair<int,int>, std::pair<int,int>> edges;
+
             for (auto [ix, iy] : cluster) {
-                double wx, wy;
-                gridToWorld(ix, iy, wx, wy);
-                points.push_back(Eigen::Vector2d(wx, wy));
+                // top edge
+                if (cell_set.find({ix, iy - 1}) == cell_set.end())
+                    edges[{ix, iy}] = {ix + 1, iy};
+                // right edge
+                if (cell_set.find({ix + 1, iy}) == cell_set.end())
+                    edges[{ix + 1, iy}] = {ix + 1, iy + 1};
+                // bottom edge
+                if (cell_set.find({ix, iy + 1}) == cell_set.end())
+                    edges[{ix + 1, iy + 1}] = {ix, iy + 1};
+                // left edge
+                if (cell_set.find({ix - 1, iy}) == cell_set.end())
+                    edges[{ix, iy + 1}] = {ix, iy};
             }
 
-            // Andrew's monotone chain convex hull
-            std::sort(points.begin(), points.end(),
-                [](const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
-                    return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y());
-                });
-
-            auto cross = [](const Eigen::Vector2d& o,
-                            const Eigen::Vector2d& a,
-                            const Eigen::Vector2d& b) -> double {
-                return (a.x() - o.x()) * (b.y() - o.y()) -
-                       (a.y() - o.y()) * (b.x() - o.x());
-            };
-
-            // Lower hull
-            std::vector<Eigen::Vector2d> hull;
-            for (const auto& p : points) {
-                while (hull.size() >= 2 &&
-                       cross(hull[hull.size()-2], hull.back(), p) <= 0)
-                    hull.pop_back();
-                hull.push_back(p);
+            if (edges.empty()) {
+                // No boundary (should not happen), fall back to points
+                for (auto [ix, iy] : cluster) {
+                    double wx, wy;
+                    gridToWorld(ix, iy, wx, wy);
+                    obstacles.push_back(
+                        boost::make_shared<PointObstacle>(wx, wy));
+                }
+                continue;
             }
 
-            // Upper hull
-            size_t lower_count = hull.size();
-            for (int i = static_cast<int>(points.size()) - 2; i >= 0; --i) {
-                while (hull.size() > lower_count &&
-                       cross(hull[hull.size()-2], hull.back(), points[i]) <= 0)
-                    hull.pop_back();
-                hull.push_back(points[i]);
-            }
-            hull.pop_back(); // remove duplicate last point
+            // Trace closed loops by following edges
+            std::vector<std::vector<std::pair<int,int>>> loops;
+            while (!edges.empty()) {
+                auto start = edges.begin()->first;
+                std::vector<std::pair<int,int>> loop;
+                auto cur = start;
+                bool closed = false;
+                do {
+                    loop.push_back(cur);
+                    auto it = edges.find(cur);
+                    if (it == edges.end())
+                        break;
+                    cur = it->second;
+                    edges.erase(it);
+                    if (cur == start) {
+                        closed = true;
+                        break;
+                    }
+                } while (true);
 
-            if (hull.size() >= 3) {
-                Point2dContainer vertices;
-                vertices.reserve(hull.size());
-                for (const auto& v : hull)
-                    vertices.push_back(v);
-                obstacles.push_back(
-                    boost::make_shared<PolygonObstacle>(vertices));
+                if (closed && loop.size() >= 3)
+                    loops.push_back(std::move(loop));
+            }
+
+            if (!loops.empty()) {
+                // Pick the longest loop (outer boundary, discard holes)
+                auto& outer = *std::max_element(loops.begin(), loops.end(),
+                    [](const auto& a, const auto& b) {
+                        return a.size() < b.size();
+                    });
+
+                // Simplify: remove collinear intermediate points
+                std::vector<std::pair<int,int>> simplified;
+                int n = static_cast<int>(outer.size());
+                for (int i = 0; i < n; ++i) {
+                    auto [x1, y1] = outer[(i - 1 + n) % n];
+                    auto [x2, y2] = outer[i];
+                    auto [x3, y3] = outer[(i + 1) % n];
+                    // Cross product of (p2-p1) and (p3-p2)
+                    int cross = (x2 - x1) * (y3 - y2) - (y2 - y1) * (x3 - x2);
+                    if (cross != 0)
+                        simplified.push_back(outer[i]);
+                }
+
+                if (simplified.size() >= 3) {
+                    Point2dContainer vertices;
+                    vertices.reserve(simplified.size());
+                    for (auto [cx, cy] : simplified) {
+                        double wx = origin_x_ + cx * resolution_;
+                        double wy = origin_y_ + cy * resolution_;
+                        vertices.push_back(Eigen::Vector2d(wx, wy));
+                    }
+                    obstacles.push_back(
+                        boost::make_shared<PolygonObstacle>(vertices));
+                } else {
+                    // Degenerate after simplification
+                    for (auto [ix, iy] : cluster) {
+                        double wx, wy;
+                        gridToWorld(ix, iy, wx, wy);
+                        obstacles.push_back(
+                            boost::make_shared<PointObstacle>(wx, wy));
+                    }
+                }
             } else {
-                // Degenerate: all points collinear, emit individual points
+                // No closed loops traced, fall back to individual points
                 for (auto [ix, iy] : cluster) {
                     double wx, wy;
                     gridToWorld(ix, iy, wx, wy);
