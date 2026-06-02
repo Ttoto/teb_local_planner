@@ -42,3 +42,14 @@ target_link_libraries(
         -lboost_system -lboost_thread -lboost_graph
         Qt5::Widgets
 )
+
+add_executable(test_teb tests/test_teb.cpp)
+
+target_link_libraries(
+        test_teb
+        lib_teb
+        ${SUITESPARSE_LIBRARIES}
+        ${G2O_LIBRARIES}
+        -lboost_system -lboost_thread -lboost_graph
+        Qt5::Widgets
+)
