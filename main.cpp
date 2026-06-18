@@ -119,6 +119,18 @@ public slots:
         _tebCostLabel = tebLabel;
     }
 
+    void toggleAnimation(bool on)
+    {
+        _animating = on;
+        if (!on)
+            _anim_frame = 0;
+    }
+
+    void setAnimSpeed(double speed)
+    {
+        _anim_speed = speed;
+    }
+
     void clearGrid()
     {
         _grid.clear();
@@ -164,6 +176,11 @@ public slots:
 
     void updateDisplay()
     {
+        // Advance animation frame
+        if (_animating) {
+            _anim_frame += static_cast<int>(_anim_speed);
+        }
+
         _grid.extractObstacles(_obstacles);
 
         _image.fill(Qt::gray);
@@ -278,6 +295,7 @@ public slots:
         _end.y() = _end_y;
         _end.theta() = _end_theta * 0.01;
 
+        std::vector<Eigen::Vector3f> path;
         try
         {
             // Draw original planned line (straight from start to goal)
@@ -301,7 +319,6 @@ public slots:
                 }
             }
 
-            std::vector<Eigen::Vector3f> path;
             _planner->getFullTrajectory(path);
 
             // Draw optimized trajectory
@@ -329,6 +346,53 @@ public slots:
                 painter.drawEllipse(QPoint(vx, vy), 4, 4);
             }
             painter.setBrush(Qt::NoBrush);
+
+            // Draw animated robot body (only when animating)
+            if (_animating && !path.empty())
+            {
+                // Wrap around when animation reaches end
+                if (_anim_frame >= (int)path.size())
+                    _anim_frame = 0;
+
+                double rx = path[_anim_frame][0];
+                double ry = path[_anim_frame][1];
+                double rtheta = path[_anim_frame][2];
+                int rpx, rpy;
+                worldToPixel(rx, ry, rpx, rpy);
+
+                double robot_radius = 0.2; // matches CircularRobotFootprint
+                int r_radius_px = static_cast<int>(robot_radius * getScale());
+
+                // Semi-transparent cyan filled circle
+                QColor body_color(0, 220, 220, 160);
+                painter.setPen(QPen(QColor(0, 200, 200), 2));
+                painter.setBrush(QBrush(body_color));
+                painter.drawEllipse(QPoint(rpx, rpy), r_radius_px, r_radius_px);
+
+                // Direction arrow inside the circle
+                int arrow_len = r_radius_px;
+                int head_len = r_radius_px / 2;
+                int tip_x = rpx + static_cast<int>(std::cos(rtheta) * arrow_len);
+                int tip_y = rpy + static_cast<int>(std::sin(rtheta) * arrow_len);
+                int base_x = rpx - static_cast<int>(std::cos(rtheta) * arrow_len * 0.4);
+                int base_y = rpy - static_cast<int>(std::sin(rtheta) * arrow_len * 0.4);
+
+                painter.setPen(QPen(Qt::white, 2));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawLine(base_x, base_y, tip_x, tip_y);
+
+                double a1 = rtheta + M_PI * 0.75;
+                double a2 = rtheta - M_PI * 0.75;
+                QPoint head[3] = {
+                    QPoint(tip_x, tip_y),
+                    QPoint(tip_x + static_cast<int>(std::cos(a1) * head_len),
+                            tip_y + static_cast<int>(std::sin(a1) * head_len)),
+                    QPoint(tip_x + static_cast<int>(std::cos(a2) * head_len),
+                            tip_y + static_cast<int>(std::sin(a2) * head_len))
+                };
+                painter.setBrush(Qt::white);
+                painter.drawPolygon(head, 3);
+            }
         }
         catch (...)
         {
@@ -341,6 +405,8 @@ public slots:
 
     void runPlanner()
     {
+        _animating = false;
+        _anim_frame = 0;
         _planner->clearPlanner();
         _planner->plan(_start, _end);
 
@@ -470,6 +536,11 @@ private:
     QLabel* _astarCostLabel = nullptr;
     QLabel* _astarTebCostLabel = nullptr;
     QLabel* _tebCostLabel = nullptr;
+
+    // Animation state
+    bool _animating = false;
+    int _anim_frame = 0;
+    double _anim_speed = 1.0;  // multiplier: 0.5x ~ 3x
 
     void recreatePlanner()
     {
@@ -606,6 +677,24 @@ int main(int argc, char* argv[])
     QPushButton* planBtn = new QPushButton("Plan");
     QObject::connect(planBtn, &QPushButton::clicked, display, &TebDisplayWidget::runPlanner);
     panelLayout->addWidget(planBtn);
+
+    // Animate button + speed slider
+    QPushButton* animateBtn = new QPushButton("Animate");
+    animateBtn->setCheckable(true);
+    QObject::connect(animateBtn, &QPushButton::toggled, display, &TebDisplayWidget::toggleAnimation);
+    QHBoxLayout* animRow = new QHBoxLayout;
+    animRow->addWidget(animateBtn);
+    animRow->addWidget(new QLabel("Speed:"));
+    QDoubleSpinBox* animSpeedSpin = new QDoubleSpinBox;
+    animSpeedSpin->setRange(0.5, 3.0);
+    animSpeedSpin->setSingleStep(0.5);
+    animSpeedSpin->setValue(1.0);
+    animSpeedSpin->setDecimals(1);
+    animSpeedSpin->setSuffix("x");
+    QObject::connect(animSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                     display, &TebDisplayWidget::setAnimSpeed);
+    animRow->addWidget(animSpeedSpin);
+    panelLayout->addLayout(animRow);
 
     // Clear Grid button
     QPushButton* clearBtn = new QPushButton("Clear Grid");
