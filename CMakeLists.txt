@@ -12,7 +12,7 @@ SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake_modules)
 find_package(Boost REQUIRED COMPONENTS system thread graph)
 find_package(SUITESPARSE REQUIRED)
 find_package(G2O REQUIRED)
-find_package(Qt5 REQUIRED COMPONENTS Widgets)
+find_package(Qt5 REQUIRED COMPONENTS Widgets Concurrent)
 
 include_directories(
         ${PROJECT_SOURCE_DIR}/inc
@@ -41,6 +41,7 @@ target_link_libraries(
         ${G2O_LIBRARIES}
         -lboost_system -lboost_thread -lboost_graph
         Qt5::Widgets
+        Qt5::Concurrent
 )
 
 add_executable(test_teb tests/test_teb.cpp)
@@ -52,4 +53,5 @@ target_link_libraries(
         ${G2O_LIBRARIES}
         -lboost_system -lboost_thread -lboost_graph
         Qt5::Widgets
+        Qt5::Concurrent
 )

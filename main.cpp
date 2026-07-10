@@ -14,8 +14,12 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QButtonGroup>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrent>
 #include <cmath>
 #include <fstream>
+#include <limits>
+#include <vector>
 
 #include "inc/teb_config.h"
 #include "inc/pose_se2.h"
@@ -35,6 +39,19 @@ static const int BRUSH_SIZE_COUNT = 5;
 class TebDisplayWidget : public QWidget
 {
     Q_OBJECT
+private:
+    struct PlanResult
+    {
+        bool success = false;
+        int generation = 0;
+        std::vector<Eigen::Vector2d> astar_path;
+        std::vector<Eigen::Vector3f> trajectory;
+        double astar_path_cost = 0.0;
+        double astar_teb_cost = std::numeric_limits<double>::infinity();
+        double teb_cost = std::numeric_limits<double>::infinity();
+        QString error;
+    };
+
 public:
     TebDisplayWidget(QWidget* parent = nullptr)
         : QWidget(parent)
@@ -50,7 +67,6 @@ public:
 
         _grid.extractObstacles(_obstacles);
         _robot_model = boost::make_shared<CircularRobotFootprint>(0.2);
-        _visual = TebVisualizationPtr(new TebVisualization(_config));
 
         _configFile = "teb_config.json";
         std::ifstream ifs(_configFile);
@@ -60,23 +76,23 @@ public:
         } else {
             _config.saveToFile(_configFile);
         }
-        _planner = new TebOptimalPlanner(_config, &_obstacles, _robot_model, _visual, &_via_points);
-        _planner->setGrid(&_grid);
 
         _timer = new QTimer(this);
         connect(_timer, &QTimer::timeout, this, &TebDisplayWidget::updateDisplay);
         _timer->start(30);
+
+        _plan_watcher = new QFutureWatcher<PlanResult>(this);
+        connect(_plan_watcher, &QFutureWatcher<PlanResult>::finished,
+                this, &TebDisplayWidget::planningFinished);
     }
 
-    ~TebDisplayWidget()
-    {
-        delete _planner;
-    }
+    ~TebDisplayWidget() = default;
 
 public slots:
     void setZoom(int percent)
     {
         _zoom = percent / 100.0;
+        requestRender();
     }
 
 private:
@@ -96,21 +112,25 @@ public slots:
     void setStartTheta(int value)
     {
         _start_theta = value;
+        invalidatePlan();
+        requestRender();
     }
 
     void setEndTheta(int value)
     {
         _end_theta = value;
+        invalidatePlan();
+        requestRender();
     }
 
-    void setStartX(double v) { _start_x = v; }
-    void setStartY(double v) { _start_y = v; }
-    void setEndX(double v)   { _end_x = v; }
-    void setEndY(double v)   { _end_y = v; }
+    void setStartX(double v) { _start_x = v; invalidatePlan(); requestRender(); }
+    void setStartY(double v) { _start_y = v; invalidatePlan(); requestRender(); }
+    void setEndX(double v)   { _end_x = v; invalidatePlan(); requestRender(); }
+    void setEndY(double v)   { _end_y = v; invalidatePlan(); requestRender(); }
 
-    void setBrushRadius(double r) { _brush_radius = r; }
+    void setBrushRadius(double r) { _brush_radius = r; update(); }
     void setToolMode(int mode) { _tool_mode = static_cast<ToolMode>(mode); }
-    void setBrushSizeIdx(int idx) { _brush_radius = BRUSH_SIZES[idx]; }
+    void setBrushSizeIdx(int idx) { _brush_radius = BRUSH_SIZES[idx]; update(); }
 
     void setCostLabels(QLabel* astarLabel, QLabel* astarTebLabel, QLabel* tebLabel)
     {
@@ -119,11 +139,18 @@ public slots:
         _tebCostLabel = tebLabel;
     }
 
+    void setPlanningControls(QPushButton* planButton, QLabel* statusLabel)
+    {
+        _planButton = planButton;
+        _statusLabel = statusLabel;
+    }
+
     void toggleAnimation(bool on)
     {
-        _animating = on;
+        _animating = on && _has_plan && !_last_plan.trajectory.empty();
         if (!on)
             _anim_frame = 0;
+        requestRender();
     }
 
     void setAnimSpeed(double speed)
@@ -134,7 +161,9 @@ public slots:
     void clearGrid()
     {
         _grid.clear();
-        _grid.extractObstacles(_obstacles);
+        _obstacles_dirty = true;
+        invalidatePlan(true);
+        requestRender();
     }
 
     void editConfig()
@@ -156,7 +185,9 @@ public slots:
             ofs << edit->toPlainText().toStdString();
             ofs.close();
             _config.loadFromFile(_configFile);
-            recreatePlanner();
+            invalidatePlan(true);
+            setStatus("Config saved");
+            requestRender();
             dialog->accept();
         });
         connect(cancelBtn, &QPushButton::clicked, dialog, &QDialog::reject);
@@ -176,12 +207,16 @@ public slots:
 
     void updateDisplay()
     {
+        if (!_scene_dirty && !_animating)
+            return;
+
         // Advance animation frame
         if (_animating) {
             _anim_frame += static_cast<int>(_anim_speed);
         }
 
-        _grid.extractObstacles(_obstacles);
+        if (_obstacles_dirty && !_mouse_left_down && !_mouse_right_down)
+            refreshObstacles();
 
         _image.fill(Qt::gray);
         QPainter painter(&_image);
@@ -306,8 +341,8 @@ public slots:
             painter.drawLine(psx, psy, pgx, pgy);
 
             // Draw A* initialization path (cyan)
-            const auto& astar_path = _planner->getAStarPath();
-            if (!astar_path.empty())
+            const auto& astar_path = _last_plan.astar_path;
+            if (_has_plan && !astar_path.empty())
             {
                 painter.setPen(QPen(QColor(0, 200, 255), 3));
                 for (size_t i = 0; i + 1 < astar_path.size(); ++i)
@@ -319,7 +354,8 @@ public slots:
                 }
             }
 
-            _planner->getFullTrajectory(path);
+            if (_has_plan)
+                path = _last_plan.trajectory;
 
             // Draw optimized trajectory
             painter.setPen(QPen(Qt::white, 1));
@@ -394,30 +430,80 @@ public slots:
                 painter.drawPolygon(head, 3);
             }
         }
-        catch (...)
-        {
-            _timer->stop();
-        }
+        catch (...) {}
 
         painter.end();
+        _scene_dirty = false;
         update();
     }
 
     void runPlanner()
     {
+        if (_planning)
+            return;
+
         _animating = false;
         _anim_frame = 0;
-        _planner->clearPlanner();
-        _planner->plan(_start, _end);
+        _start.x() = _start_x;
+        _start.y() = _start_y;
+        _start.theta() = _start_theta * 0.01;
+        _end.x() = _end_x;
+        _end.y() = _end_y;
+        _end.theta() = _end_theta * 0.01;
+
+        const int generation = ++_plan_generation;
+        TebConfig config = _config;
+        OccupancyGridMap grid = _grid;
+        PoseSE2 start = _start;
+        PoseSE2 goal = _end;
+
+        _planning = true;
+        if (_planButton)
+            _planButton->setEnabled(false);
+        setStatus("Planning...");
 
         if (_astarCostLabel)
-            _astarCostLabel->setText(QString("A* path len: %1 m").arg(_planner->getAStarPathCost(), 0, 'f', 2));
+            _astarCostLabel->setText("A* path len: --");
         if (_astarTebCostLabel)
-            _astarTebCostLabel->setText(QString("A* TEB cost: %1").arg(_planner->getAStarTEBCost(), 0, 'f', 2));
+            _astarTebCostLabel->setText("A* TEB cost: --");
         if (_tebCostLabel)
-            _tebCostLabel->setText(QString("TEB cost: %1").arg(_planner->getCurrentCost(), 0, 'f', 2));
+            _tebCostLabel->setText("TEB cost: --");
 
-        update();
+        auto future = QtConcurrent::run([generation, config, grid, start, goal]() mutable {
+            return computePlan(generation, config, grid, start, goal);
+        });
+        _plan_watcher->setFuture(future);
+        requestRender();
+    }
+
+    void planningFinished()
+    {
+        _planning = false;
+        if (_planButton)
+            _planButton->setEnabled(true);
+
+        PlanResult result = _plan_watcher->result();
+        if (result.generation != _plan_generation) {
+            setStatus("Plan discarded; inputs changed");
+            return;
+        }
+
+        _last_plan = result;
+        _has_plan = result.success && result.error.isEmpty();
+        if (!_has_plan) {
+            setStatus(result.error.isEmpty() ? "Planning failed" : result.error);
+        } else {
+            setStatus("Plan ready");
+        }
+
+        if (_astarCostLabel)
+            _astarCostLabel->setText(QString("A* path len: %1 m").arg(result.astar_path_cost, 0, 'f', 2));
+        if (_astarTebCostLabel)
+            _astarTebCostLabel->setText(QString("A* TEB cost: %1").arg(result.astar_teb_cost, 0, 'f', 2));
+        if (_tebCostLabel)
+            _tebCostLabel->setText(QString("TEB cost: %1").arg(result.teb_cost, 0, 'f', 2));
+
+        requestRender();
     }
 
 protected:
@@ -443,12 +529,14 @@ protected:
         _last_mouse_x = event->pos().x();
         _last_mouse_y = event->pos().y();
         applyBrush(_last_mouse_x, _last_mouse_y);
+        requestRender();
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override
     {
         if (event->button() == Qt::LeftButton)  _mouse_left_down = false;
         if (event->button() == Qt::RightButton) _mouse_right_down = false;
+        requestRender();
     }
 
     void mouseMoveEvent(QMouseEvent* event) override
@@ -469,6 +557,7 @@ protected:
         }
         _last_mouse_x = x1;
         _last_mouse_y = y1;
+        requestRender();
     }
 
     void applyBrush(int sx, int sy)
@@ -483,6 +572,8 @@ protected:
             else
                 _grid.setFree(wx, wy, _brush_radius);
         }
+        _obstacles_dirty = true;
+        invalidatePlan();
     }
 
     void enterEvent(QEvent*) override { _mouse_inside = true; update(); }
@@ -502,10 +593,82 @@ protected:
         _center_x = sx - static_cast<int>(wx * getScale() + 750.0);
         _center_y = sy - static_cast<int>(wy * getScale() + 750.0);
 
-        update();
+        requestRender();
     }
 
 private:
+    static PlanResult computePlan(int generation, TebConfig config, OccupancyGridMap grid,
+                                  PoseSE2 start, PoseSE2 goal)
+    {
+        PlanResult result;
+        result.generation = generation;
+
+        try {
+            ObstContainer obstacles;
+            ViaPointContainer via_points;
+            grid.extractObstacles(obstacles);
+
+            auto robot_model = boost::make_shared<CircularRobotFootprint>(0.2);
+            TebOptimalPlanner planner(config, &obstacles, robot_model,
+                                      TebVisualizationPtr(), &via_points);
+            planner.setGrid(&grid);
+            planner.clearPlanner();
+            result.success = planner.plan(start, goal);
+            result.astar_path = planner.getAStarPath();
+            result.astar_path_cost = planner.getAStarPathCost();
+            result.astar_teb_cost = planner.getAStarTEBCost();
+            result.teb_cost = planner.getCurrentCost();
+            planner.getFullTrajectory(result.trajectory);
+
+            if (!result.success)
+                result.error = "Planning failed";
+        } catch (const std::exception& e) {
+            result.success = false;
+            result.error = QString("Planning error: %1").arg(e.what());
+        } catch (...) {
+            result.success = false;
+            result.error = "Planning error";
+        }
+
+        return result;
+    }
+
+    void refreshObstacles()
+    {
+        _grid.extractObstacles(_obstacles);
+        _obstacles_dirty = false;
+    }
+
+    void requestRender()
+    {
+        _scene_dirty = true;
+        updateDisplay();
+    }
+
+    void invalidatePlan(bool resetLabels = false)
+    {
+        ++_plan_generation;
+        _has_plan = false;
+        _last_plan = PlanResult();
+        _animating = false;
+        _anim_frame = 0;
+        if (resetLabels) {
+            if (_astarCostLabel)
+                _astarCostLabel->setText("A* path len: --");
+            if (_astarTebCostLabel)
+                _astarTebCostLabel->setText("A* TEB cost: --");
+            if (_tebCostLabel)
+                _tebCostLabel->setText("TEB cost: --");
+            setStatus("Ready");
+        }
+    }
+
+    void setStatus(const QString& text)
+    {
+        if (_statusLabel)
+            _statusLabel->setText(QString("Status: %1").arg(text));
+    }
+
     TebConfig _config;
     PoseSE2 _start;
     PoseSE2 _end;
@@ -531,23 +694,24 @@ private:
     std::vector<ObstaclePtr> _obstacles;
     ViaPointContainer _via_points;
     RobotFootprintModelPtr _robot_model;
-    TebVisualizationPtr _visual;
-    TebOptimalPlanner* _planner;
     QLabel* _astarCostLabel = nullptr;
     QLabel* _astarTebCostLabel = nullptr;
     QLabel* _tebCostLabel = nullptr;
+    QLabel* _statusLabel = nullptr;
+    QPushButton* _planButton = nullptr;
+    QFutureWatcher<PlanResult>* _plan_watcher = nullptr;
+    PlanResult _last_plan;
+    bool _has_plan = false;
+    bool _planning = false;
+    bool _scene_dirty = true;
+    bool _obstacles_dirty = false;
+    int _plan_generation = 0;
 
     // Animation state
     bool _animating = false;
     int _anim_frame = 0;
     double _anim_speed = 1.0;  // multiplier: 0.5x ~ 3x
 
-    void recreatePlanner()
-    {
-        delete _planner;
-        _planner = new TebOptimalPlanner(_config, &_obstacles, _robot_model, _visual, &_via_points);
-        _planner->setGrid(&_grid);
-    }
 };
 
 int main(int argc, char* argv[])
@@ -721,10 +885,13 @@ int main(int argc, char* argv[])
     QLabel* astarCostLabel = new QLabel("A* path len: --");
     QLabel* astarTebCostLabel = new QLabel("A* TEB cost: --");
     QLabel* tebCostLabel = new QLabel("TEB cost: --");
+    QLabel* statusLabel = new QLabel("Status: Ready");
     panelLayout->addWidget(astarCostLabel);
     panelLayout->addWidget(astarTebCostLabel);
     panelLayout->addWidget(tebCostLabel);
+    panelLayout->addWidget(statusLabel);
     display->setCostLabels(astarCostLabel, astarTebCostLabel, tebCostLabel);
+    display->setPlanningControls(planBtn, statusLabel);
 
     panelLayout->addStretch();
 
