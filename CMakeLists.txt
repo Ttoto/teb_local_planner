@@ -30,6 +30,7 @@ add_library(lib_teb
         src/optimal_planner.cpp
         src/timed_elastic_band.cpp
         src/occupancy_grid.cpp
+        src/teb_scene.cpp
 )
 
 add_executable(teb main.cpp)
@@ -55,3 +56,17 @@ target_link_libraries(
         Qt5::Widgets
         Qt5::Concurrent
 )
+
+add_executable(test_teb_scene tests/test_teb_scene.cpp)
+
+target_link_libraries(
+        test_teb_scene
+        lib_teb
+        ${SUITESPARSE_LIBRARIES}
+        ${G2O_LIBRARIES}
+        -lboost_system -lboost_thread -lboost_graph
+        Qt5::Widgets
+)
+
+enable_testing()
+add_test(NAME teb_scene_round_trip COMMAND test_teb_scene)

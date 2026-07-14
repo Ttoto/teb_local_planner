@@ -27,6 +27,23 @@ cd build && cmake .. && make -j$(nproc)
 ./build/teb
 ```
 
+GUI 中的 **Save Scene** 和 **Open Scene** 按钮可将当前场景保存为 JSON 并重新加载。
+场景包含栅格尺寸、所有占用栅格以及起点/终点的位置和朝向；规划器参数仍单独保存在
+`teb_config.json` 中。打开场景后会自动重新规划。
+
+场景文件使用 `*.teb_scene.json` 扩展名，格式版本当前为 1：
+
+```json
+{
+  "version": 1,
+  "grid": {"resolution": 0.05, "width": 400, "height": 400,
+           "origin_x": -10.0, "origin_y": -10.0},
+  "occupied_cells": [[10, 20], [11, 20]],
+  "start": {"x": -2.0, "y": 0.0, "theta": 0.0},
+  "goal": {"x": 2.0, "y": 0.0, "theta": 0.0}
+}
+```
+
 ![example](screenshot.png)
 
 ## 库调用流程

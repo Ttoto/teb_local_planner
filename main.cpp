@@ -15,7 +15,12 @@
 #include <QWheelEvent>
 #include <QButtonGroup>
 #include <QFutureWatcher>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QSignalBlocker>
 #include <QtConcurrent/QtConcurrent>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -27,6 +32,7 @@
 #include "inc/obstacles.h"
 #include "inc/occupancy_grid.h"
 #include "inc/optimal_planner.h"
+#include "inc/teb_scene.h"
 #include <boost/smart_ptr.hpp>
 
 using namespace teb_local_planner;
@@ -145,6 +151,21 @@ public slots:
         _statusLabel = statusLabel;
     }
 
+    void setPoseControls(QDoubleSpinBox* startX, QDoubleSpinBox* startY,
+                         QSlider* startTheta, QLabel* startThetaLabel,
+                         QDoubleSpinBox* endX, QDoubleSpinBox* endY,
+                         QSlider* endTheta, QLabel* endThetaLabel)
+    {
+        _startXControl = startX;
+        _startYControl = startY;
+        _startThetaControl = startTheta;
+        _startThetaLabel = startThetaLabel;
+        _endXControl = endX;
+        _endYControl = endY;
+        _endThetaControl = endTheta;
+        _endThetaLabel = endThetaLabel;
+    }
+
     void toggleAnimation(bool on)
     {
         _animating = on && _has_plan && !_last_plan.trajectory.empty();
@@ -164,6 +185,66 @@ public slots:
         _obstacles_dirty = true;
         invalidatePlan(true);
         requestRender();
+    }
+
+    void saveScene()
+    {
+        QString initial = _sceneFile.isEmpty() ? "scene.teb_scene.json" : _sceneFile;
+        QString filename = QFileDialog::getSaveFileName(
+            this, "Save TEB Scene", initial, "TEB Scene (*.teb_scene.json);;JSON Files (*.json)");
+        if (filename.isEmpty())
+            return;
+        if (!filename.endsWith(".json", Qt::CaseInsensitive))
+            filename += ".teb_scene.json";
+
+        try {
+            PoseSE2 start(_start_x, _start_y, _start_theta * 0.01);
+            PoseSE2 goal(_end_x, _end_y, _end_theta * 0.01);
+            saveTebScene(filename.toStdString(), _grid, start, goal);
+            _sceneFile = filename;
+            setStatus(QString("Scene saved: %1").arg(QFileInfo(filename).fileName()));
+        } catch (const std::exception& e) {
+            QMessageBox::critical(this, "Save Scene Failed", e.what());
+            setStatus("Scene save failed");
+        }
+    }
+
+    void openScene()
+    {
+        QString initial = _sceneFile.isEmpty() ? QString() : _sceneFile;
+        QString filename = QFileDialog::getOpenFileName(
+            this, "Open TEB Scene", initial, "TEB Scene (*.teb_scene.json);;JSON Files (*.json);;All Files (*)");
+        if (filename.isEmpty())
+            return;
+
+        try {
+            TebScene scene = loadTebScene(filename.toStdString());
+
+            _grid = std::move(scene.grid);
+            _start_x = scene.start.x();
+            _start_y = scene.start.y();
+            _start_theta = static_cast<int>(std::lround(scene.start.theta() * 100.0));
+            _end_x = scene.goal.x();
+            _end_y = scene.goal.y();
+            _end_theta = static_cast<int>(std::lround(scene.goal.theta() * 100.0));
+            _start = PoseSE2(_start_x, _start_y, _start_theta * 0.01);
+            _end = PoseSE2(_end_x, _end_y, _end_theta * 0.01);
+            syncPoseControls();
+
+            _sceneFile = filename;
+            _obstacles_dirty = true;
+            refreshObstacles();
+            invalidatePlan(true);
+            requestRender();
+
+            if (_planning)
+                _plan_after_current = true;
+            else
+                runPlanner();
+        } catch (const std::exception& e) {
+            QMessageBox::critical(this, "Open Scene Failed", e.what());
+            setStatus("Scene open failed");
+        }
     }
 
     void editConfig()
@@ -485,6 +566,10 @@ public slots:
         PlanResult result = _plan_watcher->result();
         if (result.generation != _plan_generation) {
             setStatus("Plan discarded; inputs changed");
+            if (_plan_after_current) {
+                _plan_after_current = false;
+                QTimer::singleShot(0, this, &TebDisplayWidget::runPlanner);
+            }
             return;
         }
 
@@ -639,6 +724,40 @@ private:
         _obstacles_dirty = false;
     }
 
+    void syncPoseControls()
+    {
+        if (!_startXControl || !_startYControl || !_startThetaControl ||
+            !_startThetaLabel || !_endXControl || !_endYControl ||
+            !_endThetaControl || !_endThetaLabel)
+            return;
+
+        const QSignalBlocker blockStartX(_startXControl);
+        const QSignalBlocker blockStartY(_startYControl);
+        const QSignalBlocker blockStartTheta(_startThetaControl);
+        const QSignalBlocker blockEndX(_endXControl);
+        const QSignalBlocker blockEndY(_endYControl);
+        const QSignalBlocker blockEndTheta(_endThetaControl);
+
+        const double min_x = std::min({_grid.getOriginX(), _start_x, _end_x});
+        const double max_x = std::max({_grid.getOriginX() + _grid.getWidth() * _grid.getResolution(),
+                                       _start_x, _end_x});
+        const double min_y = std::min({_grid.getOriginY(), _start_y, _end_y});
+        const double max_y = std::max({_grid.getOriginY() + _grid.getHeight() * _grid.getResolution(),
+                                       _start_y, _end_y});
+        _startXControl->setRange(min_x, max_x);
+        _endXControl->setRange(min_x, max_x);
+        _startYControl->setRange(min_y, max_y);
+        _endYControl->setRange(min_y, max_y);
+        _startXControl->setValue(_start_x);
+        _startYControl->setValue(_start_y);
+        _startThetaControl->setValue(_start_theta);
+        _endXControl->setValue(_end_x);
+        _endYControl->setValue(_end_y);
+        _endThetaControl->setValue(_end_theta);
+        _startThetaLabel->setText(QString("theta: %1").arg(_start_theta * 0.01, 0, 'f', 2));
+        _endThetaLabel->setText(QString("theta: %1").arg(_end_theta * 0.01, 0, 'f', 2));
+    }
+
     void requestRender()
     {
         _scene_dirty = true;
@@ -699,13 +818,23 @@ private:
     QLabel* _tebCostLabel = nullptr;
     QLabel* _statusLabel = nullptr;
     QPushButton* _planButton = nullptr;
+    QDoubleSpinBox* _startXControl = nullptr;
+    QDoubleSpinBox* _startYControl = nullptr;
+    QSlider* _startThetaControl = nullptr;
+    QLabel* _startThetaLabel = nullptr;
+    QDoubleSpinBox* _endXControl = nullptr;
+    QDoubleSpinBox* _endYControl = nullptr;
+    QSlider* _endThetaControl = nullptr;
+    QLabel* _endThetaLabel = nullptr;
     QFutureWatcher<PlanResult>* _plan_watcher = nullptr;
     PlanResult _last_plan;
     bool _has_plan = false;
     bool _planning = false;
+    bool _plan_after_current = false;
     bool _scene_dirty = true;
     bool _obstacles_dirty = false;
     int _plan_generation = 0;
+    QString _sceneFile;
 
     // Animation state
     bool _animating = false;
@@ -779,6 +908,8 @@ int main(int argc, char* argv[])
     QObject::connect(endThetaSlider, &QSlider::valueChanged, [endThetaLabel](int v) {
         endThetaLabel->setText(QString("theta: %1").arg(v * 0.01, 0, 'f', 2));
     });
+    display->setPoseControls(startX, startY, startThetaSlider, startThetaLabel,
+                             endX, endY, endThetaSlider, endThetaLabel);
 
     // --- Right panel layout ---
     QVBoxLayout* panelLayout = new QVBoxLayout;
@@ -804,6 +935,15 @@ int main(int argc, char* argv[])
     endRow->addWidget(endThetaLabel);
     endRow->addWidget(endThetaSlider);
     panelLayout->addLayout(endRow);
+
+    QHBoxLayout* sceneRow = new QHBoxLayout;
+    QPushButton* openSceneBtn = new QPushButton("Open Scene");
+    QPushButton* saveSceneBtn = new QPushButton("Save Scene");
+    QObject::connect(openSceneBtn, &QPushButton::clicked, display, &TebDisplayWidget::openScene);
+    QObject::connect(saveSceneBtn, &QPushButton::clicked, display, &TebDisplayWidget::saveScene);
+    sceneRow->addWidget(openSceneBtn);
+    sceneRow->addWidget(saveSceneBtn);
+    panelLayout->addLayout(sceneRow);
 
     QPushButton* editConfigBtn = new QPushButton("Edit Config");
     QObject::connect(editConfigBtn, &QPushButton::clicked, display, &TebDisplayWidget::editConfig);
